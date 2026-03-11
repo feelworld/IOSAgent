@@ -1,0 +1,54 @@
+{
+  "success": { "code": 0, "message": "success" },
+  "auth": {
+    "INVALID_CREDENTIALS": { "code": 40101, "message": "Invalid username or password" },
+    "TOKEN_EXPIRED": { "code": 40102, "message": "Token has expired" },
+    "TOKEN_INVALID": { "code": 40103, "message": "Invalid token" },
+    "UNAUTHORIZED": { "code": 40100, "message": "Authentication required" },
+    "FORBIDDEN": { "code": 40300, "message": "Permission denied" }
+  },
+  "device": {
+    "NOT_FOUND": { "code": 40401, "message": "Device not found" },
+    "OFFLINE": { "code": 40901, "message": "Device is offline" },
+    "BUSY": { "code": 40902, "message": "Device is busy" },
+    "WDA_UNREACHABLE": { "code": 50201, "message": "WDA unreachable on device" }
+  },
+  "script": {
+    "NOT_FOUND": { "code": 40402, "message": "Script not found" },
+    "INVALID_SCHEMA": { "code": 42201, "message": "Script JSON schema validation failed" },
+    "VERSION_NOT_FOUND": { "code": 40403, "message": "Script version not found" },
+    "ALREADY_PUBLISHED": { "code": 40903, "message": "Script version already published" }
+  },
+  "task": {
+    "NOT_FOUND": { "code": 40404, "message": "Task not found" },
+    "CANNOT_CANCEL": { "code": 40904, "message": "Task cannot be cancelled in current state" },
+    "DISPATCH_FAILED": { "code": 50001, "message": "Failed to dispatch task" }
+  },
+  "strategy": {
+    "NOT_FOUND": { "code": 40405, "message": "Strategy not found" },
+    "SESSION_NOT_FOUND": { "code": 40406, "message": "Explore session not found" },
+    "NO_AVAILABLE_DEVICES": { "code": 40905, "message": "No available devices for strategy" }
+  },
+  "apple_account": {
+    "NOT_FOUND": { "code": 40407, "message": "Apple account not found" },
+    "ALREADY_BOUND": { "code": 40906, "message": "Account already bound to a device" },
+    "BANNED": { "code": 40907, "message": "Apple ID is banned" }
+  },
+  "client": {
+    "DEVICE_NOT_FOUND": { "code": 41001, "message": "Device UID not recognized" },
+    "WDA_UNREACHABLE": { "code": 41002, "message": "Cannot connect to WDA" },
+    "SCRIPT_PARSE_ERROR": { "code": 41003, "message": "Script JSON parsing failed" },
+    "STEP_TIMEOUT": { "code": 41004, "message": "Script step execution timed out" },
+    "TASK_TIMEOUT": { "code": 41005, "message": "Overall task execution timed out" },
+    "APPSTORE_AUTH_REQUIRED": { "code": 41006, "message": "App Store requires authentication" },
+    "APPSTORE_NOT_LOGGED_IN": { "code": 41007, "message": "App Store not logged in" },
+    "APPLE_ID_BANNED": { "code": 41008, "message": "Apple ID has been banned" },
+    "NETWORK_ERROR": { "code": 41009, "message": "Network error on device" },
+    "UNKNOWN_ERROR": { "code": 41099, "message": "Unknown client error" }
+  },
+  "server": {
+    "INTERNAL_ERROR": { "code": 50000, "message": "Internal server error" },
+    "DATABASE_ERROR": { "code": 50001, "message": "Database operation failed" },
+    "WS_CONNECTION_ERROR": { "code": 50002, "message": "WebSocket connection error" }
+  }
+}

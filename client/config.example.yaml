@@ -1,0 +1,13 @@
+server_url: wss://localhost:8000/ws/client
+machine_id: companion-001
+heartbeat_interval: 30
+reconnect_interval: 5
+max_reconnect_attempts: 0  # 0 = unlimited
+
+devices:
+  - device_uid: device-001
+    wda_url: http://192.168.1.101:8100
+    name: iPhone-12-01
+  - device_uid: device-002
+    wda_url: http://192.168.1.102:8100
+    name: iPhone-12-02

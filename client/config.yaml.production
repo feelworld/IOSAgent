@@ -1,0 +1,26 @@
+# ============================================================
+# IOSAgent Client - 生产环境配置模板
+#
+# 使用方法:
+#   1. 复制此文件: cp config.yaml.production config.yaml
+#   2. 将 YOUR_SERVER_IP 替换为 AWS 服务器公网 IP 或域名
+#   3. 如果启用了 SSL，将 ws:// 改为 wss://，http:// 改为 https://
+#   4. 修改 auth 的用户名密码为实际值
+#   5. 配置 devices 列表中的 iPad 信息
+# ============================================================
+
+server_url: ws://YOUR_SERVER_IP/ws/client
+server_http_url: http://YOUR_SERVER_IP
+machine_id: companion-001
+heartbeat_interval: 30
+reconnect_interval: 5
+max_reconnect_attempts: 0
+
+auth:
+  username: admin
+  password: admin123
+
+devices:
+  - device_uid: ipad-001
+    wda_url: http://localhost:8100
+    name: iPad

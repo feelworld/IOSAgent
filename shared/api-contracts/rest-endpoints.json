@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "REST API Endpoint Definitions",
+  "basePath": "/api/v1",
+  "endpoints": {
+    "auth": {
+      "POST /auth/login": { "body": ["username", "password"], "response": ["access_token", "token_type", "expires_in"] },
+      "GET /auth/me": { "auth": true, "response": ["id", "username", "role", "permissions"] }
+    },
+    "devices": {
+      "GET /devices": { "auth": true, "query": ["status", "group_id", "page", "size", "sort"] },
+      "GET /devices/{id}": { "auth": true },
+      "GET /devices/stats": { "auth": true }
+    },
+    "scripts": {
+      "GET /scripts": { "auth": true, "query": ["status", "page", "size"] },
+      "POST /scripts": { "auth": true, "body": ["name", "description", "steps"] },
+      "PUT /scripts/{id}": { "auth": true, "body": ["steps", "changelog"] },
+      "POST /scripts/{id}/publish": { "auth": true },
+      "POST /scripts/{id}/rollback": { "auth": true, "body": ["target_version"] },
+      "GET /scripts/{id}/versions": { "auth": true },
+      "POST /scripts/{id}/gray-release": { "auth": true, "body": ["device_ids"] }
+    },
+    "tasks": {
+      "POST /tasks/dispatch": { "auth": true, "body": ["device_ids", "script_id", "script_version", "params", "timeout_seconds"] },
+      "GET /tasks": { "auth": true, "query": ["status", "device_id", "source", "page", "size", "sort"] },
+      "GET /tasks/{id}": { "auth": true },
+      "POST /tasks/{id}/cancel": { "auth": true },
+      "GET /tasks/stats": { "auth": true }
+    },
+    "strategies": {
+      "POST /strategies/explore/start": { "auth": true, "body": ["script_id", "device_count", "rounds", "param_variations"] },
+      "POST /strategies/explore/{session_id}/stop": { "auth": true },
+      "GET /strategies/explore/{session_id}/analysis": { "auth": true },
+      "POST /strategies/execute/start": { "auth": true, "body": ["strategy_ids", "device_ids"] },
+      "GET /strategies": { "auth": true, "query": ["phase", "status"] }
+    },
+    "configs": {
+      "GET /configs": { "auth": true, "query": ["scope", "scope_id"] },
+      "PUT /configs": { "auth": true, "body": ["key", "value", "scope", "scope_id"] }
+    },
+    "groups": {
+      "GET /groups": { "auth": true },
+      "POST /groups": { "auth": true, "body": ["name", "description"] },
+      "PUT /groups/{id}": { "auth": true },
+      "DELETE /groups/{id}": { "auth": true },
+      "POST /groups/{id}/devices": { "auth": true, "body": ["device_ids"] }
+    },
+    "apple_accounts": {
+      "GET /apple-accounts": { "auth": true },
+      "POST /apple-accounts": { "auth": true, "body": ["email", "password", "pool_group"] },
+      "POST /apple-accounts/{id}/bind": { "auth": true, "body": ["device_id", "is_primary"] },
+      "POST /apple-accounts/{id}/unbind": { "auth": true }
+    },
+    "dashboard": {
+      "GET /dashboard": { "auth": true }
+    },
+    "health": {
+      "GET /health": { "auth": false }
+    }
+  }
+}

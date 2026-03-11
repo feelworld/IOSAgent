@@ -1,0 +1,48 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "WebSocket Message Definitions",
+  "description": "Server ↔ Client and Server → Admin WebSocket message types",
+  "definitions": {
+    "BaseMessage": {
+      "type": "object",
+      "required": ["type", "id", "timestamp", "payload"],
+      "properties": {
+        "type": { "type": "string" },
+        "id": { "type": "string", "format": "uuid" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "payload": { "type": "object" }
+      }
+    },
+    "ServerToClient": {
+      "enum": [
+        "command.dispatch",
+        "command.cancel",
+        "config.update",
+        "apple_account.switch"
+      ]
+    },
+    "ClientToServer": {
+      "enum": [
+        "device.register",
+        "heartbeat",
+        "task.status",
+        "task.result",
+        "task.error"
+      ]
+    },
+    "ServerToAdmin": {
+      "enum": [
+        "device.status_changed",
+        "device.heartbeat",
+        "task.updated",
+        "task.completed",
+        "dashboard.stats",
+        "alert",
+        "strategy.effectiveness_changed"
+      ]
+    },
+    "AdminToServer": {
+      "enum": ["subscribe", "unsubscribe"]
+    }
+  }
+}

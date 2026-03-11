@@ -1,0 +1,82 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node.js / Vue
+node_modules/
+admin/dist/
+admin/node_modules/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment
+.env
+.env.local
+.env.*.local
+server/.env
+client/.env
+client/config.yaml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+*.tmp
+
+# MongoDB
+*.bson
+dump/
+
+# Secrets
+*.key
+*.pem
+*.crt
+
+# Deployment runtime
+certbot/
+mongo_data/
+admin/dist/
+
+# Cursor IDE
+.cursor/
+terminals/
+agent-transcripts/
+mcps/
+
+# Screenshots & temp
+*.png
+*.jpg
+*.bson
+
+# Large binaries
+*.ipa
+*.zip
+
+# Temp debug files
+*.xml
+query
+run_login*.py
+run_test.py
+check_result.py
+check_wda.py
+quick_screenshot.py
+repack_wda.py
+tap_no_upgrade.py

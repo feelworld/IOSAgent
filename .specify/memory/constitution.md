@@ -35,12 +35,13 @@
 
 ### I. Three-Tier Architecture Separation
 
-系统 MUST 严格划分为三个独立层级：**服务端（Server）**、**客户端（Client）**、**后台（Admin）**。
+系统 MUST 严格划分为三个独立层级：**服务端（Server）**、**客户端（Client Agent，运行在伴生机上）**、**后台（Admin）**。
 
 - 服务端负责调度和控制所有客户端，是唯一的指令下发中心
-- 客户端是安装在 iOS 设备上的执行程序，MUST NOT 自主发起业务动作，只响应服务端指令
+- 客户端是运行在伴生机（Companion Machine）上的 Python Agent，通过 HTTP 控制越狱 iOS 设备上的 WDA（WebDriverAgent），MUST NOT 自主发起业务动作，只响应服务端指令
+- iOS 设备仅运行 WDA，不直接与服务端通信，由伴生机代理管理
 - 后台负责管理配置、发布脚本、监控设备状态，MUST NOT 直接向客户端下发指令
-- 数据流向：后台 → 服务端 → 客户端（配置/脚本），客户端 → 服务端 → 后台（状态/结果）
+- 数据流向：后台 → 服务端 → 伴生机 Agent → iOS 设备（WDA），iOS 设备 → 伴生机 Agent → 服务端 → 后台
 - 三层之间通过明确定义的 API 契约通信，禁止跨层直接访问
 
 ### II. Command-Driven Communication
@@ -96,23 +97,23 @@
 
 | 层级 | 技术选型 | 说明 |
 |------|---------|------|
-| 服务端 | TODO(SERVER_STACK) | 需支持高并发连接管理、WebSocket/长连接 |
-| 客户端 | iOS (Swift/Objective-C) | 越狱设备环境，需适配 iOS 系统 API |
-| 后台 | TODO(ADMIN_STACK) | Web 管理界面，需支持实时数据展示 |
-| 通信协议 | TODO(PROTOCOL) | 服务端-客户端建议 WebSocket，后台-服务端建议 REST + WebSocket |
-| 数据库 | TODO(DATABASE) | 需支持设备状态时序数据和配置存储 |
+| 服务端 | Python | 负责设备调度、命令下发、状态管理 |
+| 客户端 Agent | Python (伴生机) + WDA (iOS 设备) | 伴生机通过 HTTP 控制越狱设备上的 WDA |
+| 后台 | Vue.js | Web 管理界面，实时数据展示 |
+| 通信协议 | WebSocket + REST | 服务端-客户端使用 WebSocket，后台-服务端使用 REST + WebSocket |
+| 数据库 | MongoDB | 存储设备状态、任务记录、脚本配置等 |
 
 ### Monorepo Structure
 
 ```text
 IOSAgent/
-├── server/              # 服务端
+├── server/              # 服务端（Python FastAPI）
 │   ├── src/
 │   └── tests/
-├── client/              # iOS 客户端
-│   ├── IOSAgent/        # Xcode 项目
-│   └── scripts/         # 可下发的脚本模板
-├── admin/               # 后台管理
+├── client/              # 伴生机 Agent（Python，控制 iOS 设备上的 WDA）
+│   ├── src/
+│   └── tests/
+├── admin/               # 后台管理（Vue.js）
 │   ├── src/
 │   └── tests/
 ├── shared/              # 共享定义
@@ -126,7 +127,7 @@ IOSAgent/
 
 - 每个层级 MUST 可独立部署和升级
 - `shared/` 中的契约定义是三层间的 Single Source of Truth
-- 客户端 MUST 支持热更新脚本而不需要重新安装 App
+- 服务端 MUST 可实时下发新版本脚本到伴生机 Agent，无需重启 Agent 即可执行
 - 后台操作 MUST 有操作审计日志
 - 系统 MUST 支持同时管理至少 100 台设备
 
@@ -161,4 +162,4 @@ IOSAgent/
 - 所有 PR/Code Review MUST 验证是否符合 Constitution 中的原则
 - 运行时开发指引参见 `docs/` 目录下的具体文档
 
-**Version**: 1.0.0 | **Ratified**: 2026-03-07 | **Last Amended**: 2026-03-07
+**Version**: 1.1.0 | **Ratified**: 2026-03-07 | **Last Amended**: 2026-03-07

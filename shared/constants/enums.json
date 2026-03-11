@@ -1,0 +1,17 @@
+{
+  "DeviceStatus": ["online", "offline", "busy", "error", "maintenance"],
+  "TaskStatus": ["pending", "dispatched", "running", "success", "failed", "timeout", "cancelled"],
+  "TaskSource": ["manual", "explore", "execute"],
+  "ScriptStatus": ["draft", "published", "deprecated"],
+  "StrategyPhase": ["explore", "execute"],
+  "StrategyStatus": ["active", "paused", "completed", "abandoned"],
+  "AppleAccountStatus": ["active", "banned", "suspended", "unknown"],
+  "ConfigScope": ["global", "device_group", "device"],
+  "CompanionStatus": ["online", "offline"],
+  "AlertLevel": ["info", "warning", "critical"],
+  "ScriptAction": [
+    "launch_app", "tap", "type", "swipe", "wait", "search",
+    "scroll", "screenshot", "back", "home", "find_element",
+    "assert_exists", "assert_not_exists", "conditional"
+  ]
+}

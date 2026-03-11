@@ -1,0 +1,16 @@
+__pycache__
+*.pyc
+.git
+.cursor
+node_modules
+admin/node_modules
+admin/dist
+*.png
+*.jpg
+*.xml
+.env.local
+certbot
+mongo_data
+terminals
+agent-transcripts
+mcps

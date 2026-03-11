@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Script Step Schema",
+  "description": "JSON schema for automation script steps",
+  "type": "object",
+  "required": ["steps"],
+  "properties": {
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["action"],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "launch_app",
+              "tap",
+              "type",
+              "swipe",
+              "wait",
+              "search",
+              "scroll",
+              "screenshot",
+              "back",
+              "home",
+              "find_element",
+              "assert_exists",
+              "assert_not_exists",
+              "conditional"
+            ]
+          },
+          "target": {
+            "type": "string",
+            "description": "Element locator (XPath, accessibility id, class name, etc.)"
+          },
+          "params": {
+            "type": "object",
+            "properties": {
+              "text": { "type": "string" },
+              "seconds": { "type": "number", "minimum": 0 },
+              "direction": { "type": "string", "enum": ["up", "down", "left", "right"] },
+              "duration": { "type": "number" },
+              "bundle_id": { "type": "string" },
+              "format": { "type": "string", "enum": ["png", "jpg"] }
+            }
+          },
+          "timeout": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 30,
+            "description": "Per-step timeout in seconds"
+          }
+        }
+      }
+    }
+  }
+}
