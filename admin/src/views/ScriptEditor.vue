@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useScriptStore } from '../stores/script'
-import type { ScriptItem, ScriptStep, ScriptVersionItem } from '../stores/script'
+import type { ScriptItem, ScriptStep } from '../stores/script'
 import ScriptStepForm from '../components/ScriptStepForm.vue'
 
 const store = useScriptStore()
@@ -110,9 +110,8 @@ function updateStep(idx: number, step: ScriptStep) {
 function moveStep(idx: number, dir: -1 | 1) {
   const target = idx + dir
   if (target < 0 || target >= editSteps.value.length) return
-  const tmp = editSteps.value[idx]
-  editSteps.value[idx] = editSteps.value[target]
-  editSteps.value[target] = tmp
+  const arr = editSteps.value
+  ;[arr[idx], arr[target]] = [arr[target], arr[idx]]
 }
 
 async function handleSave() {
