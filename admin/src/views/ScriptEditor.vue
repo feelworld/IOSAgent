@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useScriptStore } from '../stores/script'
 import type { ScriptItem, ScriptStep } from '../stores/script'
@@ -111,7 +111,9 @@ function moveStep(idx: number, dir: -1 | 1) {
   const target = idx + dir
   if (target < 0 || target >= editSteps.value.length) return
   const arr = editSteps.value
-  ;[arr[idx], arr[target]] = [arr[target], arr[idx]]
+  const tmp = arr[idx]!
+  arr[idx] = arr[target]!
+  arr[target] = tmp
 }
 
 async function handleSave() {
