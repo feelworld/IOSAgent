@@ -7,9 +7,10 @@ from datetime import datetime, timezone
 import aiohttp
 
 from client.src.command_executor import CommandExecutor
-from client.src.config import AgentConfig, load_config
+from client.src.config import AgentConfig, DeviceConfig, load_config
 from client.src.device_info import collect_device_info
 from client.src.heartbeat import HeartbeatSender
+from client.src.usb_monitor import USBMonitor, USBDevice, WDA_PORT_ON_DEVICE
 from client.src.ws_client import AgentWSClient
 
 logging.basicConfig(
@@ -38,36 +39,27 @@ async def obtain_token(config: AgentConfig) -> str:
 async def main():
     config = load_config()
     logger.info(
-        "Agent starting: machine_id=%s, devices=%d",
+        "Agent starting: machine_id=%s, static_devices=%d",
         config.machine_id,
         len(config.devices),
     )
 
     ws_client = AgentWSClient(config)
+    device_map: dict[str, str] = {}
+    executor: CommandExecutor | None = None
+
     heartbeat = HeartbeatSender(
         machine_id=config.machine_id,
-        devices=config.devices,
+        devices=list(config.devices),
         send_fn=ws_client.send_message,
         interval=config.heartbeat_interval,
     )
 
-    token = await obtain_token(config)
-    logger.info("Obtained JWT token from server")
-
-    try:
-        await ws_client.connect(token)
-
-        devices_info = []
-        for dev in config.devices:
-            info = await collect_device_info(dev.wda_url, dev.device_uid)
-            devices_info.append({
-                "device_uid": info.device_uid,
-                "model": info.model,
-                "ios_version": info.ios_version,
-                "wda_url": dev.wda_url,
-            })
-
-        register_msg = {
+    async def register_devices(devices_info: list[dict]):
+        """Send device.register message to server."""
+        if not devices_info:
+            return
+        msg = {
             "type": "device.register",
             "id": str(uuid.uuid4()),
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -76,35 +68,91 @@ async def main():
                 "devices": devices_info,
             },
         }
-        await ws_client.send_message(register_msg)
-        logger.info("Registered %d devices", len(devices_info))
+        await ws_client.send_message(msg)
+
+    # ── Callback: USB device becomes ready ───────────────────────────
+    async def on_usb_device_ready(usb_dev: USBDevice):
+        device_uid = usb_dev.udid[:12]
+        if usb_dev.wifi_ip:
+            wda_url = f"http://{usb_dev.wifi_ip}:{WDA_PORT_ON_DEVICE}"
+        else:
+            wda_url = f"http://localhost:{usb_dev.local_port}"
+
+        device_map[device_uid] = wda_url
+        if executor:
+            executor.devices[device_uid] = wda_url
+
+        heartbeat.add_device(DeviceConfig(
+            device_uid=device_uid, wda_url=wda_url, name=usb_dev.name,
+        ))
+
+        info = await collect_device_info(wda_url, device_uid)
+        await register_devices([{
+            "device_uid": device_uid,
+            "model": info.model or usb_dev.model,
+            "ios_version": info.ios_version or usb_dev.ios_version,
+            "wda_url": wda_url,
+        }])
+        logger.info("✅ Auto-registered device: %s -> %s", device_uid, wda_url)
+
+    # ── Callback: USB device removed ─────────────────────────────────
+    async def on_usb_device_removed(usb_dev: USBDevice):
+        device_uid = usb_dev.udid[:12]
+        if usb_dev.wifi_ip:
+            wifi_url = f"http://{usb_dev.wifi_ip}:{WDA_PORT_ON_DEVICE}"
+            logger.info("📴 USB unplugged for %s, switching to WiFi: %s", device_uid, wifi_url)
+            device_map[device_uid] = wifi_url
+            if executor:
+                executor.devices[device_uid] = wifi_url
+        else:
+            logger.warning("📴 USB removed for %s with no WiFi IP — device will go offline", device_uid)
+
+    usb_monitor = USBMonitor(
+        on_device_ready=on_usb_device_ready,
+        on_device_removed=on_usb_device_removed,
+    )
+
+    token = await obtain_token(config)
+    logger.info("Obtained JWT token from server")
+
+    try:
+        await ws_client.connect(token)
+
+        # Register statically-configured devices
+        static_info = []
+        for dev in config.devices:
+            info = await collect_device_info(dev.wda_url, dev.device_uid)
+            static_info.append({
+                "device_uid": info.device_uid,
+                "model": info.model,
+                "ios_version": info.ios_version,
+                "wda_url": dev.wda_url,
+            })
+            device_map[dev.device_uid] = dev.wda_url
+
+        if static_info:
+            await register_devices(static_info)
+            logger.info("Registered %d static device(s)", len(static_info))
 
         await heartbeat.start()
 
-        # Build device_uid -> wda_url mapping for command execution
-        device_map = {dev.device_uid: dev.wda_url for dev in config.devices}
         executor = CommandExecutor(device_map, ws_client.send_message)
         ws_client.register_handler("command.dispatch", executor.handle_command_dispatch)
         ws_client.register_handler("command.cancel", executor.handle_command_cancel)
         logger.info("CommandExecutor ready for %d device(s)", len(device_map))
 
+        # Start USB auto-detection
+        await usb_monitor.start()
+
         async def handle_config_update(message: dict) -> None:
             payload = message.get("payload", {})
             configs: dict = payload.get("configs", {})
             if not configs:
-                logger.warning("config.update received with empty configs")
                 return
-
             logger.info("Config update received: %s", list(configs.keys()))
-
             if "heartbeat_interval" in configs:
                 new_interval = int(configs["heartbeat_interval"])
                 heartbeat.update_interval(new_interval)
-                logger.info("heartbeat_interval updated to %d", new_interval)
-
-            for key, value in configs.items():
-                if key != "heartbeat_interval":
-                    logger.info("Config changed: %s = %s", key, value)
 
         ws_client.register_handler("config.update", handle_config_update)
 
@@ -125,6 +173,7 @@ async def main():
     except KeyboardInterrupt:
         pass
     finally:
+        await usb_monitor.stop()
         await heartbeat.stop()
         await ws_client.disconnect()
         logger.info("Agent shutdown complete")

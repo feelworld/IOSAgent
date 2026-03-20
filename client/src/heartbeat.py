@@ -76,3 +76,8 @@ class HeartbeatSender:
     def update_interval(self, new_interval: int):
         self.interval = new_interval
         logger.info("Heartbeat interval updated to %ds", new_interval)
+
+    def add_device(self, device):
+        if not any(d.device_uid == device.device_uid for d in self.devices):
+            self.devices.append(device)
+            logger.info("Heartbeat now tracking %d device(s)", len(self.devices))

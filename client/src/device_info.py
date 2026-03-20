@@ -28,11 +28,13 @@ async def collect_device_info(wda_url: str, device_uid: str) -> DeviceInfo:
                 data = await resp.json()
                 value = data.get("value", {})
                 os_info = value.get("os", {})
-                device_data = value.get("device", {}) if "device" in value else {}
+                raw_device = value.get("device", {})
+                device_data = raw_device if isinstance(raw_device, dict) else {}
+                device_name = raw_device if isinstance(raw_device, str) else device_data.get("model", "Unknown")
 
                 return DeviceInfo(
                     device_uid=device_uid,
-                    model=device_data.get("model", "Unknown"),
+                    model=device_data.get("model", None) or device_name or "Unknown",
                     ios_version=os_info.get("version", "Unknown"),
                     battery_level=None,
                     network_type=None,
