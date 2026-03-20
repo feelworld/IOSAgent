@@ -3,9 +3,11 @@ import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useDeviceStore, type DeviceItem } from '../stores/device'
 import { useTaskStore } from '../stores/task'
+import { useScriptStore, type ScriptItem } from '../stores/script'
 
 const store = useDeviceStore()
 const taskStore = useTaskStore()
+const scriptStore = useScriptStore()
 const filterStatus = ref('')
 const currentPage = ref(1)
 const pageSize = ref(20)
@@ -19,14 +21,27 @@ const dispatchForm = ref({
   timeout: 300,
 })
 const dispatching = ref(false)
+const scriptList = ref<ScriptItem[]>([])
+const selectedScriptName = ref('')
 
 function handleSelectionChange(rows: DeviceItem[]) {
   selectedDevices.value = rows
 }
 
-function openDispatchDialog() {
+async function openDispatchDialog() {
   dispatchForm.value = { script_id: '', script_version: 1, params_json: '', timeout: 300 }
+  selectedScriptName.value = ''
   dispatchVisible.value = true
+  await scriptStore.fetchScripts({ size: 100 })
+  scriptList.value = scriptStore.scripts
+}
+
+function handleScriptSelect(scriptId: string) {
+  const script = scriptList.value.find(s => s.id === scriptId)
+  if (script) {
+    dispatchForm.value.script_version = script.current_version
+    selectedScriptName.value = script.name
+  }
 }
 
 async function handleDispatch() {
@@ -35,7 +50,7 @@ async function handleDispatch() {
     return
   }
   if (!dispatchForm.value.script_id) {
-    ElMessage.warning('请输入脚本 ID')
+    ElMessage.warning('请选择脚本')
     return
   }
 
@@ -195,11 +210,31 @@ onMounted(() => {
           </el-tag>
           <span v-if="!selectedDevices.length" style="color: var(--el-text-color-placeholder)">请在表格中勾选设备</span>
         </el-form-item>
-        <el-form-item label="脚本 ID">
-          <el-input v-model="dispatchForm.script_id" placeholder="输入脚本 ID" />
+        <el-form-item label="选择脚本">
+          <el-select
+            v-model="dispatchForm.script_id"
+            placeholder="请选择脚本"
+            filterable
+            style="width: 100%"
+            @change="handleScriptSelect"
+          >
+            <el-option
+              v-for="s in scriptList"
+              :key="s.id"
+              :label="`${s.name} (v${s.current_version}) ${s.script_type === 'python' ? '[Py]' : ''}`"
+              :value="s.id"
+            >
+              <span>{{ s.name }}</span>
+              <el-tag :type="s.script_type === 'python' ? 'warning' : 'primary'" size="small" style="margin-left: 8px">
+                {{ s.script_type === 'python' ? 'Python' : '步骤' }}
+              </el-tag>
+              <span style="float: right; color: var(--el-text-color-secondary); font-size: 12px">v{{ s.current_version }}</span>
+            </el-option>
+          </el-select>
         </el-form-item>
         <el-form-item label="脚本版本">
           <el-input-number v-model="dispatchForm.script_version" :min="1" />
+          <span style="margin-left: 8px; color: var(--el-text-color-secondary); font-size: 12px">默认使用最新版本</span>
         </el-form-item>
         <el-form-item label="参数 (JSON)">
           <el-input
