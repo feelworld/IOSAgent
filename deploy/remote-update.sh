@@ -10,7 +10,8 @@ info()  { echo -e "${CYAN}[INFO]${NC}  $*"; }
 ok()    { echo -e "${GREEN}[ OK ]${NC}  $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 
-PROJECT_DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+PROJECT_DIR="${1:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+BRANCH="${2:-001-ios-ranking-system}"
 cd "$PROJECT_DIR"
 
 echo -e "${CYAN}"
@@ -25,7 +26,6 @@ info "Current commit: $(git log -1 --format='%h %s')"
 info "Pulling latest changes..."
 
 git fetch origin
-BRANCH=$(git rev-parse --abbrev-ref HEAD)
 git reset --hard "origin/$BRANCH"
 
 NEW_HEAD=$(git rev-parse HEAD)
