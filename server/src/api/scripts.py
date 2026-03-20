@@ -60,7 +60,9 @@ class CreateScriptRequest(BaseModel):
 
 
 class UpdateScriptRequest(BaseModel):
-    steps: list[dict] = Field(..., min_length=1)
+    script_type: Optional[str] = None
+    steps: list[dict] = Field(default_factory=list)
+    python_code: Optional[str] = None
     changelog: Optional[str] = None
 
 
@@ -121,6 +123,7 @@ async def update_script(
         version = await script_manager.update_script(
             script_id=PydanticObjectId(script_id),
             steps=body.steps,
+            python_code=body.python_code,
             changelog=body.changelog,
             updated_by=user.id,
         )

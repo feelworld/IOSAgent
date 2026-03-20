@@ -99,25 +99,37 @@ async def create_script(
 
 async def update_script(
     script_id: PydanticObjectId,
-    steps: list[dict],
+    steps: list[dict] | None = None,
+    python_code: str | None = None,
     changelog: str | None = None,
     updated_by: PydanticObjectId | None = None,
 ) -> ScriptVersion:
-    errors = validate_steps(steps)
-    if errors:
-        raise ValueError("; ".join(errors))
-
     script = await Script.get(script_id)
     if not script:
         raise ValueError(f"脚本 {script_id} 不存在")
 
+    st = script.script_type
+    parsed_steps: list[ScriptStep] = []
+
+    if st == ScriptType.PYTHON:
+        if not python_code:
+            raise ValueError("python 类型脚本必须提供 python_code")
+    else:
+        if not steps:
+            raise ValueError("steps 类型脚本必须提供 steps")
+        errors = validate_steps(steps)
+        if errors:
+            raise ValueError("; ".join(errors))
+        parsed_steps = [ScriptStep(**s) for s in steps]
+
     new_version_num = script.current_version + 1
-    parsed_steps = [ScriptStep(**s) for s in steps]
 
     version = ScriptVersion(
         script_id=script_id,
         version=new_version_num,
+        script_type=st,
         steps=parsed_steps,
+        python_code=python_code,
         changelog=changelog,
     )
     await version.insert()

@@ -34,6 +34,17 @@ def load_config(path: str | None = None) -> AgentConfig:
         path = os.environ.get("AGENT_CONFIG_PATH", "config.yaml")
     with open(path, "r", encoding="utf-8") as f:
         raw = yaml.safe_load(f)
+
+    active = os.environ.get("AGENT_PROFILE") or raw.get("active", "")
+    profiles = raw.get("profiles", {})
+    if active and active in profiles:
+        profile = profiles[active]
+        raw.setdefault("server_url", profile.get("server_url"))
+        raw.setdefault("server_http_url", profile.get("server_http_url"))
+        for k, v in profile.items():
+            if v is not None:
+                raw.setdefault(k, v)
+
     devices = [DeviceConfig(**d) for d in raw.get("devices", [])]
     auth_raw = raw.get("auth", {})
     auth = AuthConfig(

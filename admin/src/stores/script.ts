@@ -9,10 +9,13 @@ export interface ScriptStep {
   timeout?: number
 }
 
+export type ScriptType = 'steps' | 'python'
+
 export interface ScriptItem {
   id: string
   name: string
   description: string | null
+  script_type: ScriptType
   current_version: number
   status: string
   created_by: string | null
@@ -24,7 +27,9 @@ export interface ScriptVersionItem {
   id: string
   script_id: string
   version: number
+  script_type: ScriptType
   steps: ScriptStep[]
+  python_code?: string
   changelog: string | null
   published_at: string | null
   created_at: string
@@ -56,14 +61,18 @@ export const useScriptStore = defineStore('script', () => {
   async function createScript(payload: {
     name: string
     description?: string
-    steps: ScriptStep[]
+    script_type?: ScriptType
+    steps?: ScriptStep[]
+    python_code?: string
   }) {
     const { data } = await client.post('/scripts', payload)
     return data
   }
 
   async function updateScript(id: string, payload: {
-    steps: ScriptStep[]
+    script_type?: ScriptType
+    steps?: ScriptStep[]
+    python_code?: string
     changelog?: string
   }) {
     const { data } = await client.put(`/scripts/${id}`, payload)

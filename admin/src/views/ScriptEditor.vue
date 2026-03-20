@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useScriptStore } from '../stores/script'
-import type { ScriptItem, ScriptStep } from '../stores/script'
+import type { ScriptItem, ScriptStep, ScriptType } from '../stores/script'
 import ScriptStepForm from '../components/ScriptStepForm.vue'
 
 const store = useScriptStore()
@@ -14,7 +14,9 @@ const pageSize = ref(20)
 const selectedScript = ref<ScriptItem | null>(null)
 const editName = ref('')
 const editDescription = ref('')
+const editScriptType = ref<ScriptType>('steps')
 const editSteps = ref<ScriptStep[]>([])
+const editPythonCode = ref('')
 const editChangelog = ref('')
 const isCreating = ref(false)
 const saving = ref(false)
@@ -22,6 +24,8 @@ const showJson = ref(false)
 
 const rollbackVersion = ref<number>(1)
 const showRollbackDialog = ref(false)
+
+const isPython = computed(() => editScriptType.value === 'python')
 
 const statusOptions = [
   { label: '全部', value: '' },
@@ -73,6 +77,7 @@ function handleSelect(script: ScriptItem) {
   isCreating.value = false
   editName.value = script.name
   editDescription.value = script.description ?? ''
+  editScriptType.value = script.script_type ?? 'steps'
   editChangelog.value = ''
   loadVersionsAndSteps(script.id)
 }
@@ -83,6 +88,7 @@ async function loadVersionsAndSteps(scriptId: string) {
     v => v.version === selectedScript.value?.current_version,
   )
   editSteps.value = current?.steps?.map(s => ({ ...s })) ?? []
+  editPythonCode.value = current?.python_code ?? ''
 }
 
 function handleCreate() {
@@ -90,7 +96,9 @@ function handleCreate() {
   selectedScript.value = null
   editName.value = ''
   editDescription.value = ''
+  editScriptType.value = 'steps'
   editSteps.value = [{ action: 'launch_app', target: '', timeout: 30 }]
+  editPythonCode.value = ''
   editChangelog.value = ''
   store.versions = []
 }
@@ -121,19 +129,32 @@ async function handleSave() {
     ElMessage.warning('请输入脚本名称')
     return
   }
-  if (editSteps.value.length === 0) {
-    ElMessage.warning('请至少添加一个步骤')
-    return
+  if (isPython.value) {
+    if (!editPythonCode.value.trim()) {
+      ElMessage.warning('请输入 Python 代码')
+      return
+    }
+  } else {
+    if (editSteps.value.length === 0) {
+      ElMessage.warning('请至少添加一个步骤')
+      return
+    }
   }
 
   saving.value = true
   try {
     if (isCreating.value) {
-      const res = await store.createScript({
+      const payload: any = {
         name: editName.value,
         description: editDescription.value || undefined,
-        steps: editSteps.value,
-      })
+        script_type: editScriptType.value,
+      }
+      if (isPython.value) {
+        payload.python_code = editPythonCode.value
+      } else {
+        payload.steps = editSteps.value
+      }
+      const res = await store.createScript(payload)
       if (res.code === 0) {
         ElMessage.success('脚本创建成功')
         isCreating.value = false
@@ -144,10 +165,15 @@ async function handleSave() {
         ElMessage.error(res.message || '创建失败')
       }
     } else if (selectedScript.value) {
-      const res = await store.updateScript(selectedScript.value.id, {
-        steps: editSteps.value,
+      const payload: any = {
         changelog: editChangelog.value || undefined,
-      })
+      }
+      if (isPython.value) {
+        payload.python_code = editPythonCode.value
+      } else {
+        payload.steps = editSteps.value
+      }
+      const res = await store.updateScript(selectedScript.value.id, payload)
       if (res.code === 0) {
         ElMessage.success('脚本已更新（新版本已创建）')
         editChangelog.value = ''
@@ -244,7 +270,12 @@ onMounted(() => {
             @row-click="handleSelect"
             style="width: 100%"
           >
-            <el-table-column label="名称" prop="name" min-width="120" show-overflow-tooltip />
+            <el-table-column label="名称" min-width="120" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ row.name }}
+                <el-tag v-if="row.script_type === 'python'" type="warning" size="small" style="margin-left: 4px">Py</el-tag>
+              </template>
+            </el-table-column>
             <el-table-column label="状态" width="80">
               <template #default="{ row }">
                 <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
@@ -287,6 +318,12 @@ onMounted(() => {
             <el-form-item label="脚本名称">
               <el-input v-model="editName" placeholder="请输入脚本名称" :disabled="!isCreating" />
             </el-form-item>
+            <el-form-item label="脚本类型">
+              <el-radio-group v-model="editScriptType" :disabled="!isCreating">
+                <el-radio value="steps">步骤编排</el-radio>
+                <el-radio value="python">Python 脚本</el-radio>
+              </el-radio-group>
+            </el-form-item>
             <el-form-item label="描述">
               <el-input v-model="editDescription" type="textarea" :rows="2" placeholder="脚本描述（可选）" :disabled="!isCreating" />
             </el-form-item>
@@ -295,8 +332,24 @@ onMounted(() => {
             </el-form-item>
           </el-form>
 
-          <!-- Steps -->
-          <div class="steps-section">
+          <!-- Python Code Editor -->
+          <div v-if="isPython" class="code-section">
+            <div class="steps-header">
+              <span class="section-title">Python 代码</span>
+              <el-tag type="info" size="small">需定义 async def run(driver, params)</el-tag>
+            </div>
+            <el-input
+              v-model="editPythonCode"
+              type="textarea"
+              :rows="20"
+              placeholder="async def run(driver, params):&#10;    # 你的自动化逻辑&#10;    pass"
+              class="code-textarea"
+              :input-style="{ fontFamily: 'Consolas, Monaco, monospace', fontSize: '13px', lineHeight: '1.5' }"
+            />
+          </div>
+
+          <!-- Steps Editor -->
+          <div v-else class="steps-section">
             <div class="steps-header">
               <span class="section-title">步骤列表 ({{ editSteps.length }})</span>
               <el-space>
@@ -361,7 +414,9 @@ onMounted(() => {
                   <el-tag v-if="v.published_at" type="success" size="small" style="margin-left: 4px">已发布</el-tag>
                 </div>
                 <div v-if="v.changelog" class="version-changelog">{{ v.changelog }}</div>
-                <div class="version-meta">{{ v.steps.length }} 个步骤</div>
+                <div class="version-meta">
+                  {{ v.script_type === 'python' ? `Python · ${(v.python_code || '').split('\n').length} 行` : `${v.steps.length} 个步骤` }}
+                </div>
               </el-timeline-item>
             </el-timeline>
           </div>
@@ -478,5 +533,15 @@ onMounted(() => {
   color: var(--el-text-color-placeholder);
   font-size: 12px;
   margin-top: 2px;
+}
+.code-section {
+  margin-top: 16px;
+}
+.code-textarea :deep(.el-textarea__inner) {
+  background-color: #1e1e1e;
+  color: #d4d4d4;
+  border-radius: 6px;
+  padding: 12px;
+  tab-size: 4;
 }
 </style>
