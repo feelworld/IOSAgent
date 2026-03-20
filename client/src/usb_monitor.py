@@ -166,6 +166,7 @@ class USBMonitor:
                     logger.info("   ✅ WDA installed successfully!")
                 else:
                     logger.error("   ❌ WDA installation failed. Ensure device is jailbroken with AppSync Unified.")
+                    self._failed.add(udid)
                     return
             else:
                 logger.warning("   ⚠️ WDA not installed and no IPA configured.")
