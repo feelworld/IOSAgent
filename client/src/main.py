@@ -108,6 +108,8 @@ async def main():
             logger.warning("📴 USB removed for %s with no WiFi IP — device will go offline", device_uid)
 
     usb_monitor = USBMonitor(
+        wda_ipa_path=config.usb_monitor.wda_ipa_path,
+        scan_interval=config.usb_monitor.scan_interval,
         on_device_ready=on_usb_device_ready,
         on_device_removed=on_usb_device_removed,
     )
@@ -142,7 +144,10 @@ async def main():
         logger.info("CommandExecutor ready for %d device(s)", len(device_map))
 
         # Start USB auto-detection
-        await usb_monitor.start()
+        if config.usb_monitor.enabled:
+            await usb_monitor.start()
+        else:
+            logger.info("USB monitor disabled in config")
 
         async def handle_config_update(message: dict) -> None:
             payload = message.get("payload", {})
