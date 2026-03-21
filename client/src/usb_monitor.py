@@ -64,6 +64,7 @@ class USBDevice:
     wda_running: bool = False
     wda_installed: bool = False
     registered: bool = False
+    usb_connected: bool = True
     forward_proc: subprocess.Popen | None = field(default=None, repr=False)
     keeper_proc: subprocess.Popen | None = field(default=None, repr=False)
     ssh_tunnel: object | None = field(default=None, repr=False)
@@ -155,8 +156,15 @@ class USBMonitor:
     async def _scan_once(self):
         current_udids = await self._list_usb_devices()
 
+        # Handle USB reconnection for WiFi-only devices
+        for udid in current_udids:
+            dev = self._known.get(udid)
+            if dev and not dev.usb_connected:
+                logger.info("USB reconnected for %s", dev.name or udid[:12])
+                dev.usb_connected = True
+
         # Check removed USB devices — keep alive via SSH tunnel if possible
-        removed = [u for u in self._known if u not in current_udids]
+        removed = [u for u in self._known if u not in current_udids and self._known[u].usb_connected]
         for udid in removed:
             dev = self._known[udid]
             wda_alive = False
@@ -173,7 +181,6 @@ class USBMonitor:
                                     attempt + 1, dev.name or udid[:12])
                         await asyncio.sleep(10)
             elif dev.wifi_ip:
-                # No tunnel yet — try to establish one
                 if await self._setup_ssh_tunnel(dev):
                     tunnel_url = f"http://localhost:{dev.ssh_tunnel.local_port}"
                     for attempt in range(6):
@@ -187,8 +194,8 @@ class USBMonitor:
             if wda_alive:
                 if dev.forward_proc:
                     self._stop_forward(dev)
-                if not dev.wda_running:
-                    dev.wda_running = True
+                dev.usb_connected = False
+                dev.wda_running = True
                 logger.info("USB gone but WDA alive via SSH tunnel: %s", dev.name or udid[:12])
                 if self.on_device_ready:
                     await self.on_device_ready(dev)
@@ -208,7 +215,7 @@ class USBMonitor:
                 continue
             await self._handle_new_device(udid)
 
-        # Health check: detect WDA state changes
+        # Health check for all known devices (USB + WiFi-only)
         for udid, dev in list(self._known.items()):
             wda_url = self._get_wda_url(dev)
             if not wda_url:

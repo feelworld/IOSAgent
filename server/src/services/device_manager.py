@@ -36,7 +36,8 @@ async def register_device(
         device.ios_version = ios_version
         device.wda_url = wda_url
         device.companion_id = companion_id
-        device.status = DeviceStatus.ONLINE
+        if device.status not in (DeviceStatus.BUSY,):
+            device.status = DeviceStatus.ONLINE
         device.last_heartbeat = now
         if name:
             device.name = name
@@ -47,7 +48,7 @@ async def register_device(
             if val is not None:
                 setattr(device, key, val)
         await device.save()
-        logger.info(f"Device re-registered: {device_uid}")
+        logger.info(f"Device re-registered: {device_uid} (status={device.status.value})")
     else:
         init_kwargs = dict(
             device_uid=device_uid,
@@ -109,15 +110,19 @@ async def update_heartbeat(
     network_type: str | None = None,
     current_task_id: str | None = None,
 ) -> Optional[Device]:
-    """Update device heartbeat and status."""
+    """Update device heartbeat and status.
+
+    Preserves BUSY status — only the task completion flow should clear it.
+    """
     device = await Device.find_one(Device.device_uid == device_uid)
     if not device:
         logger.warning(f"Heartbeat for unknown device: {device_uid}")
         return None
-    try:
-        device.status = DeviceStatus(status)
-    except ValueError:
-        pass
+    if device.status != DeviceStatus.BUSY:
+        try:
+            device.status = DeviceStatus(status)
+        except ValueError:
+            pass
     device.last_heartbeat = datetime.now(timezone.utc)
     if battery_level is not None:
         device.battery_level = battery_level
