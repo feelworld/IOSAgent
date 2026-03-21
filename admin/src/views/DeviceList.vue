@@ -169,23 +169,36 @@ onMounted(() => {
     </el-card>
 
     <el-table :data="store.devices" v-loading="store.loading" stripe style="width: 100%" @selection-change="handleSelectionChange">
-      <el-table-column type="selection" width="50" />
-      <el-table-column prop="device_uid" label="设备 UID" width="160" />
-      <el-table-column prop="name" label="名称" width="120" />
-      <el-table-column prop="model" label="型号" width="120" />
-      <el-table-column prop="ios_version" label="iOS 版本" width="100" />
-      <el-table-column label="状态" width="100">
+      <el-table-column type="selection" width="50" fixed />
+      <el-table-column prop="name" label="名称" width="120" fixed />
+      <el-table-column label="状态" width="90" fixed>
         <template #default="{ row }">
           <el-tag :type="statusTagType(row.status)" size="small">{{ row.status }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="电量" width="80">
+      <el-table-column prop="model" label="型号" width="120" />
+      <el-table-column prop="ios_version" label="iOS" width="80" />
+      <el-table-column label="电量" width="70">
         <template #default="{ row }">
           {{ row.battery_level != null ? `${row.battery_level}%` : '-' }}
         </template>
       </el-table-column>
-      <el-table-column prop="companion_id" label="伴生机" width="140" />
-      <el-table-column label="最后心跳" min-width="180">
+      <el-table-column label="越狱" width="90">
+        <template #default="{ row }">
+          <el-tag v-if="row.jailbroken === true" type="warning" size="small">{{ row.jailbreak_type || '是' }}</el-tag>
+          <el-tag v-else-if="row.jailbroken === false" type="info" size="small">否</el-tag>
+          <span v-else>-</span>
+        </template>
+      </el-table-column>
+      <el-table-column prop="udid" label="UDID" width="160" show-overflow-tooltip />
+      <el-table-column prop="serial_number" label="序列号" width="130" show-overflow-tooltip />
+      <el-table-column prop="imei" label="IMEI" width="160" show-overflow-tooltip />
+      <el-table-column prop="product_type" label="产品型号" width="120" />
+      <el-table-column prop="cpu_architecture" label="CPU" width="100" />
+      <el-table-column prop="wifi_mac" label="WiFi MAC" width="150" show-overflow-tooltip />
+      <el-table-column prop="companion_id" label="伴生机" width="140" show-overflow-tooltip />
+      <el-table-column prop="device_uid" label="设备 UID" width="160" show-overflow-tooltip />
+      <el-table-column label="最后心跳" min-width="170">
         <template #default="{ row }">
           {{ row.last_heartbeat ? new Date(row.last_heartbeat).toLocaleString() : '-' }}
         </template>

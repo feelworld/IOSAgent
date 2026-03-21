@@ -17,6 +17,18 @@ export interface DeviceItem {
   current_task_id: string | null
   last_heartbeat: string | null
   registered_at: string | null
+  udid: string | null
+  serial_number: string | null
+  imei: string | null
+  meid: string | null
+  wifi_mac: string | null
+  bluetooth_mac: string | null
+  cpu_architecture: string | null
+  hardware_platform: string | null
+  chip_id: number | null
+  product_type: string | null
+  jailbroken: boolean | null
+  jailbreak_type: string | null
 }
 
 export interface DeviceStats {
