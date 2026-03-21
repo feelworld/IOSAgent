@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Optional
 
-from client.src.device_info import check_wda_health
+from client.src.device_info import check_wda_health, get_battery_level
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,7 @@ class HeartbeatSender:
         self.interval = interval
         self._task: Optional[asyncio.Task] = None
         self._running = False
+        self._udid_map: dict[str, str] = {}  # device_uid -> full udid
 
     async def start(self):
         self._running = True
@@ -52,10 +53,12 @@ class HeartbeatSender:
         device_statuses = []
         for dev in self.devices:
             is_healthy = await check_wda_health(dev.wda_url)
+            udid = self._udid_map.get(dev.device_uid, "")
+            battery = await get_battery_level(dev.wda_url, udid) if is_healthy else None
             device_statuses.append({
                 "device_uid": dev.device_uid,
                 "status": "online" if is_healthy else "error",
-                "battery_level": None,
+                "battery_level": battery,
                 "network_type": None,
                 "appstore_logged_in": None,
                 "current_task_id": None,
@@ -77,7 +80,14 @@ class HeartbeatSender:
         self.interval = new_interval
         logger.info("Heartbeat interval updated to %ds", new_interval)
 
-    def add_device(self, device):
-        if not any(d.device_uid == device.device_uid for d in self.devices):
-            self.devices.append(device)
-            logger.info("Heartbeat now tracking %d device(s)", len(self.devices))
+    def add_device(self, device, udid: str = ""):
+        for i, d in enumerate(self.devices):
+            if d.device_uid == device.device_uid:
+                self.devices[i] = device
+                if udid:
+                    self._udid_map[device.device_uid] = udid
+                return
+        self.devices.append(device)
+        logger.info("Heartbeat now tracking %d device(s)", len(self.devices))
+        if udid:
+            self._udid_map[device.device_uid] = udid

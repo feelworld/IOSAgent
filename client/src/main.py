@@ -8,7 +8,7 @@ import aiohttp
 
 from client.src.command_executor import CommandExecutor
 from client.src.config import AgentConfig, DeviceConfig, load_config
-from client.src.device_info import collect_device_info
+from client.src.device_info import collect_device_info, get_battery_level
 from client.src.heartbeat import HeartbeatSender
 from client.src.usb_monitor import USBMonitor, USBDevice, WDA_PORT_ON_DEVICE
 from client.src.ws_client import AgentWSClient
@@ -73,42 +73,70 @@ async def main():
     # ── Callback: USB device becomes ready ───────────────────────────
     async def on_usb_device_ready(usb_dev: USBDevice):
         device_uid = usb_dev.udid[:12]
-        if usb_dev.wifi_ip:
+        if usb_dev.ssh_tunnel and usb_dev.ssh_tunnel.is_alive():
+            wda_url = f"http://localhost:{usb_dev.ssh_tunnel.local_port}"
+        elif usb_dev.local_port:
+            wda_url = f"http://localhost:{usb_dev.local_port}"
+        elif usb_dev.wifi_ip:
             wda_url = f"http://{usb_dev.wifi_ip}:{WDA_PORT_ON_DEVICE}"
         else:
             wda_url = f"http://localhost:{usb_dev.local_port}"
 
         device_map[device_uid] = wda_url
         if executor:
-            executor.devices[device_uid] = wda_url
+            executor.add_device(device_uid, wda_url)
 
         heartbeat.add_device(DeviceConfig(
             device_uid=device_uid, wda_url=wda_url, name=usb_dev.name,
-        ))
+        ), udid=usb_dev.udid)
 
         info = await collect_device_info(wda_url, device_uid)
-        await register_devices([{
+        battery = await get_battery_level(wda_url, usb_dev.udid)
+        reg_payload = {
             "device_uid": device_uid,
-            "model": info.model or usb_dev.model,
-            "ios_version": info.ios_version or usb_dev.ios_version,
+            "name": usb_dev.name or "Unknown",
+            "model": info.model if info.model else usb_dev.model or "Unknown",
+            "ios_version": info.ios_version if info.ios_version else usb_dev.ios_version or "Unknown",
+            "battery_level": battery,
             "wda_url": wda_url,
-        }])
-        logger.info("✅ Auto-registered device: %s -> %s", device_uid, wda_url)
+            "udid": usb_dev.udid,
+            "serial_number": usb_dev.serial_number,
+            "imei": usb_dev.imei,
+            "meid": usb_dev.meid,
+            "wifi_mac": usb_dev.wifi_mac,
+            "bluetooth_mac": usb_dev.bluetooth_mac,
+            "cpu_architecture": usb_dev.cpu_architecture,
+            "hardware_platform": usb_dev.hardware_platform,
+            "chip_id": usb_dev.chip_id or None,
+            "product_type": usb_dev.product_type,
+            "jailbroken": usb_dev.jailbroken,
+            "jailbreak_type": usb_dev.jailbreak_type or None,
+        }
+        reg_payload = {k: v for k, v in reg_payload.items() if v is not None and v != ""}
+        await register_devices([reg_payload])
+        logger.info("Auto-registered device: %s (%s) -> %s", device_uid, usb_dev.name, wda_url)
 
     # ── Callback: USB device removed ─────────────────────────────────
     async def on_usb_device_removed(usb_dev: USBDevice):
         device_uid = usb_dev.udid[:12]
-        if usb_dev.wifi_ip:
+        if usb_dev.ssh_tunnel and usb_dev.ssh_tunnel.is_alive():
+            tunnel_url = f"http://localhost:{usb_dev.ssh_tunnel.local_port}"
+            logger.info("USB unplugged for %s, using SSH tunnel: %s", device_uid, tunnel_url)
+            device_map[device_uid] = tunnel_url
+            if executor:
+                executor.update_device_url(device_uid, tunnel_url)
+        elif usb_dev.wifi_ip:
             wifi_url = f"http://{usb_dev.wifi_ip}:{WDA_PORT_ON_DEVICE}"
-            logger.info("📴 USB unplugged for %s, switching to WiFi: %s", device_uid, wifi_url)
+            logger.info("USB unplugged for %s, switching to WiFi: %s", device_uid, wifi_url)
             device_map[device_uid] = wifi_url
             if executor:
-                executor.devices[device_uid] = wifi_url
+                executor.update_device_url(device_uid, wifi_url)
         else:
-            logger.warning("📴 USB removed for %s with no WiFi IP — device will go offline", device_uid)
+            logger.warning("USB removed for %s with no WiFi IP — device will go offline", device_uid)
 
     usb_monitor = USBMonitor(
         wda_ipa_path=config.usb_monitor.wda_ipa_path,
+        appsync_deb_path=config.usb_monitor.appsync_deb_path,
         scan_interval=config.usb_monitor.scan_interval,
         on_device_ready=on_usb_device_ready,
         on_device_removed=on_usb_device_removed,

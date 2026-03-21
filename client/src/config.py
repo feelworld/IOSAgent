@@ -22,6 +22,7 @@ class USBMonitorConfig:
     enabled: bool = True
     scan_interval: int = 5
     wda_ipa_path: str = ""
+    appsync_deb_path: str = ""
 
 
 @dataclass
@@ -64,6 +65,7 @@ def load_config(path: str | None = None) -> AgentConfig:
         enabled=usb_raw.get("enabled", True),
         scan_interval=usb_raw.get("scan_interval", 5),
         wda_ipa_path=usb_raw.get("wda_ipa_path", ""),
+        appsync_deb_path=usb_raw.get("appsync_deb_path", ""),
     )
 
     return AgentConfig(

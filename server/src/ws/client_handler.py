@@ -61,13 +61,22 @@ async def _handle_device_register(machine_id: str, payload: dict):
     devices_data = payload.get("devices", [])
     registered_device_ids = []
 
+    passthrough_keys = (
+        "udid", "serial_number", "imei", "meid", "wifi_mac", "bluetooth_mac",
+        "cpu_architecture", "hardware_platform", "chip_id", "product_type",
+        "jailbroken", "jailbreak_type",
+    )
     for dev in devices_data:
+        extra = {k: dev[k] for k in passthrough_keys if k in dev}
         device = await device_manager.register_device(
             device_uid=dev["device_uid"],
             model=dev.get("model", "Unknown"),
             ios_version=dev.get("ios_version", "Unknown"),
             wda_url=dev.get("wda_url", ""),
             companion_id=machine_id,
+            name=dev.get("name"),
+            battery_level=dev.get("battery_level"),
+            **extra,
         )
         registered_device_ids.append(device.id)
 

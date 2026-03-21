@@ -32,6 +32,24 @@ class Device(Document):
     registered_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     metadata: Optional[dict] = None
 
+    # Hardware identifiers
+    udid: Optional[str] = None
+    serial_number: Optional[str] = None
+    imei: Optional[str] = None
+    meid: Optional[str] = None
+    wifi_mac: Optional[str] = None
+    bluetooth_mac: Optional[str] = None
+
+    # Hardware specs
+    cpu_architecture: Optional[str] = None
+    hardware_platform: Optional[str] = None
+    chip_id: Optional[int] = None
+    product_type: Optional[str] = None
+
+    # Jailbreak info
+    jailbroken: Optional[bool] = None
+    jailbreak_type: Optional[str] = None
+
     class Settings:
         name = "devices"
         indexes = [

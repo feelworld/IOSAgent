@@ -30,6 +30,17 @@ class CommandExecutor:
         for uid, url in devices.items():
             self._drivers[uid] = WDADriver(url, uid)
 
+    def add_device(self, device_uid: str, wda_url: str) -> None:
+        """Dynamically register a new device (e.g. USB-detected)."""
+        self.devices[device_uid] = wda_url
+        self._drivers[device_uid] = WDADriver(wda_url, device_uid)
+        logger.info("CommandExecutor: added device %s -> %s", device_uid, wda_url)
+
+    def update_device_url(self, device_uid: str, wda_url: str) -> None:
+        """Update WDA URL for an existing device (e.g. after WDA restart)."""
+        self.devices[device_uid] = wda_url
+        self._drivers[device_uid] = WDADriver(wda_url, device_uid)
+
     async def handle_command_dispatch(self, message: dict) -> None:
         """Handle command.dispatch message from server."""
         payload = message.get("payload", message)

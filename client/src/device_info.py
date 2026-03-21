@@ -15,10 +15,13 @@ class DeviceInfo:
     battery_level: Optional[int] = None
     network_type: Optional[str] = None
     screen_size: Optional[str] = None
+    wifi_ip: Optional[str] = None
 
 
 async def collect_device_info(wda_url: str, device_uid: str) -> DeviceInfo:
-    """Query WDA /status endpoint to gather device info."""
+    """Query WDA /status and /wda/batteryInfo endpoints to gather device info."""
+    info = DeviceInfo(device_uid=device_uid, model="", ios_version="")
+
     async with aiohttp.ClientSession() as session:
         try:
             async with session.get(
@@ -28,25 +31,80 @@ async def collect_device_info(wda_url: str, device_uid: str) -> DeviceInfo:
                 data = await resp.json()
                 value = data.get("value", {})
                 os_info = value.get("os", {})
-                raw_device = value.get("device", {})
-                device_data = raw_device if isinstance(raw_device, dict) else {}
-                device_name = raw_device if isinstance(raw_device, str) else device_data.get("model", "Unknown")
+                info.ios_version = os_info.get("version", "")
+                info.wifi_ip = value.get("ios", {}).get("ip", "")
 
-                return DeviceInfo(
-                    device_uid=device_uid,
-                    model=device_data.get("model", None) or device_name or "Unknown",
-                    ios_version=os_info.get("version", "Unknown"),
-                    battery_level=None,
-                    network_type=None,
-                    screen_size=None,
-                )
+                raw_device = value.get("device", {})
+                if isinstance(raw_device, dict):
+                    info.model = raw_device.get("model", "") or raw_device.get("name", "")
+                elif isinstance(raw_device, str) and raw_device not in ("Unknown", ""):
+                    info.model = raw_device
         except Exception as e:
             logger.error("Failed to collect device info from %s: %s", wda_url, e)
-            return DeviceInfo(
-                device_uid=device_uid,
-                model="Unknown",
-                ios_version="Unknown",
-            )
+
+        for endpoint in ("/wda/batteryInfo", "/wda/device/info"):
+            try:
+                async with session.get(
+                    f"{wda_url}{endpoint}",
+                    timeout=aiohttp.ClientTimeout(total=5),
+                ) as resp:
+                    if resp.status != 200:
+                        continue
+                    data = await resp.json()
+                    level = data.get("value", {}).get("level")
+                    if level is not None:
+                        info.battery_level = int(level * 100)
+                        break
+            except Exception:
+                continue
+
+    return info
+
+
+async def get_battery_level(wda_url: str, udid: str = "") -> Optional[int]:
+    """Get battery level. Tries lockdown first (more reliable), then WDA."""
+    if udid:
+        try:
+            level = await _get_battery_via_lockdown(udid)
+            if level is not None:
+                return level
+        except Exception:
+            pass
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            for endpoint in ("/wda/batteryInfo", "/wda/device/info"):
+                try:
+                    async with session.get(
+                        f"{wda_url}{endpoint}",
+                        timeout=aiohttp.ClientTimeout(total=5),
+                    ) as resp:
+                        if resp.status != 200:
+                            continue
+                        data = await resp.json()
+                        value = data.get("value", {})
+                        level = value.get("level")
+                        if level is not None:
+                            return int(level * 100)
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    return None
+
+
+async def _get_battery_via_lockdown(udid: str) -> Optional[int]:
+    """Get battery level directly from device via DiagnosticsService."""
+    from pymobiledevice3.lockdown import create_using_usbmux
+    from pymobiledevice3.services.diagnostics import DiagnosticsService
+    ld = await create_using_usbmux(serial=udid)
+    ds = DiagnosticsService(lockdown=ld)
+    await ds.connect()
+    info = await ds.get_battery()
+    cap = info.get("CurrentCapacity")
+    if cap is not None:
+        return int(cap)
+    return None
 
 
 async def check_wda_health(wda_url: str) -> bool:

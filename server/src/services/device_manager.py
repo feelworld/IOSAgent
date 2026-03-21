@@ -17,10 +17,20 @@ async def register_device(
     ios_version: str,
     wda_url: str,
     companion_id: str,
+    name: str | None = None,
+    battery_level: int | None = None,
+    **extra_fields,
 ) -> Device:
     """Register a new device or update existing one on reconnect."""
     device = await Device.find_one(Device.device_uid == device_uid)
     now = datetime.now(timezone.utc)
+
+    hw_fields = (
+        "udid", "serial_number", "imei", "meid", "wifi_mac", "bluetooth_mac",
+        "cpu_architecture", "hardware_platform", "chip_id", "product_type",
+        "jailbroken", "jailbreak_type",
+    )
+
     if device:
         device.model = model
         device.ios_version = ios_version
@@ -28,19 +38,34 @@ async def register_device(
         device.companion_id = companion_id
         device.status = DeviceStatus.ONLINE
         device.last_heartbeat = now
+        if name:
+            device.name = name
+        if battery_level is not None:
+            device.battery_level = battery_level
+        for key in hw_fields:
+            val = extra_fields.get(key)
+            if val is not None:
+                setattr(device, key, val)
         await device.save()
         logger.info(f"Device re-registered: {device_uid}")
     else:
-        device = Device(
+        init_kwargs = dict(
             device_uid=device_uid,
+            name=name,
             model=model,
             ios_version=ios_version,
             wda_url=wda_url,
             companion_id=companion_id,
             status=DeviceStatus.ONLINE,
+            battery_level=battery_level,
             last_heartbeat=now,
             registered_at=now,
         )
+        for key in hw_fields:
+            val = extra_fields.get(key)
+            if val is not None:
+                init_kwargs[key] = val
+        device = Device(**init_kwargs)
         await device.insert()
         logger.info(f"New device registered: {device_uid}")
     return device
