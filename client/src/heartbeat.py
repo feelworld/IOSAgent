@@ -54,7 +54,12 @@ class HeartbeatSender:
         for dev in self.devices:
             is_healthy = await check_wda_health(dev.wda_url)
             udid = self._udid_map.get(dev.device_uid, "")
-            battery = await get_battery_level(dev.wda_url, udid) if is_healthy else None
+            battery = None
+            if is_healthy:
+                usb_available = await self._is_usb_connected(udid) if udid else False
+                battery = await get_battery_level(
+                    dev.wda_url, udid if usb_available else ""
+                )
             device_statuses.append({
                 "device_uid": dev.device_uid,
                 "status": "online" if is_healthy else "error",
@@ -79,6 +84,16 @@ class HeartbeatSender:
     def update_interval(self, new_interval: int):
         self.interval = new_interval
         logger.info("Heartbeat interval updated to %ds", new_interval)
+
+    @staticmethod
+    async def _is_usb_connected(udid: str) -> bool:
+        """Quick check whether device is still USB-connected."""
+        try:
+            from pymobiledevice3.usbmux import list_devices
+            devs = await list_devices()
+            return any(d.serial == udid and d.connection_type == "USB" for d in devs)
+        except Exception:
+            return False
 
     def add_device(self, device, udid: str = ""):
         for i, d in enumerate(self.devices):

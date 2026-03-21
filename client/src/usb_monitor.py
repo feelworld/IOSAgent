@@ -520,6 +520,9 @@ class USBMonitor:
                 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
                 ssh.connect(ssh_target, port=ssh_port, username="root",
                             password="alpine", timeout=10)
+                transport = ssh.get_transport()
+                if transport:
+                    transport.set_keepalive(10)
                 return ssh
             except Exception:
                 pass

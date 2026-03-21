@@ -55,7 +55,10 @@ class WDAKeeper:
             username=SSH_USER, password=SSH_PASS,
             timeout=15, banner_timeout=15,
         )
-        logger.info("SSH connected to %s", self.wifi_ip)
+        transport = self._ssh.get_transport()
+        if transport:
+            transport.set_keepalive(10)
+        logger.info("SSH connected to %s (keepalive=10s)", self.wifi_ip)
 
     def _ensure_ssh(self):
         if not self._ssh:
