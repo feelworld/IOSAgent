@@ -512,6 +512,7 @@ async def do_search_download(driver, params):
     """Search for an app in App Store and download it."""
     app_name = params.get("app_name", "")
     device_uid = params.get("device_uid", "")
+    apple_password = params.get("apple_password", "")
     tag = f"[Search][{device_uid}]"
 
     if not app_name:
@@ -643,11 +644,10 @@ async def do_search_download(driver, params):
 
             if app_name.lower() in cell_text.lower():
                 logger.info("%s Found target app cell: '%s'", tag, cell_text[:60])
-                # Tap the cell to enter app detail page, then download from there
                 try:
                     await driver.tap_element(cid)
                     await asyncio.sleep(3)
-                    found = await _tap_download_button(driver, tag)
+                    found = await _tap_download_button(driver, tag, apple_password)
                     if found:
                         await _wait_download_complete(driver, tag)
                         return
@@ -656,7 +656,7 @@ async def do_search_download(driver, params):
                 break
 
         # Strategy B: Try to find GET/获取 buttons directly on screen
-        found = await _tap_download_button(driver, tag)
+        found = await _tap_download_button(driver, tag, apple_password)
         if found:
             if found == "installed":
                 return
@@ -680,7 +680,7 @@ async def do_search_download(driver, params):
     logger.warning("%s Could not find '%s' after all attempts", tag, app_name)
 
 
-async def _tap_download_button(driver, tag):
+async def _tap_download_button(driver, tag, apple_password=""):
     """Try to find and tap a download button. Returns 'tapped'/'installed'/None."""
     for name in ["获取", "GET", "iCloud"]:
         btn = await has_element(driver, "name", name)
@@ -689,6 +689,9 @@ async def _tap_download_button(driver, tag):
             await tap_element(driver, btn)
             await asyncio.sleep(3)
 
+            # Handle password confirmation dialog
+            await _handle_password_prompt(driver, tag, apple_password)
+
             install_btn = await has_element(driver, "name", "安装")
             if not install_btn:
                 install_btn = await has_element(driver, "name", "Install")
@@ -696,6 +699,7 @@ async def _tap_download_button(driver, tag):
                 logger.info("%s Confirming install", tag)
                 await tap_element(driver, install_btn)
                 await asyncio.sleep(2)
+                await _handle_password_prompt(driver, tag, apple_password)
 
             await dismiss_popups(driver, tag)
             return "tapped"
@@ -707,6 +711,39 @@ async def _tap_download_button(driver, tag):
             return "installed"
 
     return None
+
+
+async def _handle_password_prompt(driver, tag, apple_password):
+    """Handle the Apple ID password confirmation dialog during download."""
+    secure_fields = await find_elements(driver, "class name", "XCUIElementTypeSecureTextField")
+    if not secure_fields:
+        return
+
+    sign_btn = await has_element(driver, "name", "登录")
+    if not sign_btn:
+        sign_btn = await has_element(driver, "name", "Sign In")
+    if not sign_btn:
+        sign_btn = await has_element(driver, "name", "好")
+    if not sign_btn:
+        sign_btn = await has_element(driver, "name", "OK")
+
+    if not sign_btn:
+        return
+
+    logger.info("%s Password confirmation dialog detected, entering password", tag)
+    if apple_password:
+        await clear_and_type(driver, secure_fields[0], apple_password)
+        await asyncio.sleep(0.5)
+        logger.info("%s Tapping sign-in button", tag)
+        await tap_element(driver, sign_btn)
+        await asyncio.sleep(5)
+    else:
+        logger.warning("%s Password prompt but no password available, tapping cancel", tag)
+        cancel_btn = await has_element(driver, "name", "取消")
+        if not cancel_btn:
+            cancel_btn = await has_element(driver, "name", "Cancel")
+        if cancel_btn:
+            await tap_element(driver, cancel_btn)
 
 
 async def _wait_download_complete(driver, tag):
