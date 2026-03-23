@@ -524,6 +524,10 @@ async def do_search_download(driver, params):
     await ensure_appstore_foreground(driver, tag)
     await asyncio.sleep(2)
 
+    # Step 0: Dismiss any popups on App Store launch (e.g. "继续")
+    await dismiss_popups(driver, tag)
+    await asyncio.sleep(1)
+
     # Step 1: Navigate to Search tab
     search_tab = await has_element(driver, "name", "搜索")
     if not search_tab:
