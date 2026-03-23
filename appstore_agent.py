@@ -148,6 +148,7 @@ async def ensure_appstore_foreground(driver, tag):
 async def dismiss_popups(driver, tag):
     """Try to dismiss any system popup. Returns True if a popup was found."""
     popup_buttons = [
+        "始终需要", "Always Require",
         "同意并继续", "Agree & Continue", "Agree and Continue",
         "不添加号码并继续",
         "不是居住在中国大陆的中国公民？",
@@ -688,6 +689,15 @@ async def _tap_download_button(driver, tag, apple_password=""):
             logger.info("%s Tapping download button: '%s'", tag, name)
             await tap_element(driver, btn)
             await asyncio.sleep(3)
+
+            # Handle "always require password" dialog
+            for pname in ["始终需要", "Always Require"]:
+                pbtn = await has_element(driver, "name", pname)
+                if pbtn:
+                    logger.info("%s Tapping password setting: '%s'", tag, pname)
+                    await tap_element(driver, pbtn)
+                    await asyncio.sleep(3)
+                    break
 
             # Handle password confirmation dialog
             await _handle_password_prompt(driver, tag, apple_password)
