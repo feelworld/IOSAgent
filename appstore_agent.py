@@ -566,20 +566,31 @@ async def do_search_download(driver, params):
         logger.warning("%s No search field to type into", tag)
         return
 
-    # Step 4: Tap "搜索" / "search" key on keyboard
-    search_btn = await has_element(driver, "name", "搜索")
-    if not search_btn:
-        search_btn = await has_element(driver, "name", "search")
-    if not search_btn:
-        search_btn = await has_element(driver, "name", "Search")
-    if search_btn:
-        logger.info("%s Tapping search button", tag)
-        await tap_element(driver, search_btn)
-    else:
-        logger.info("%s Pressing Enter via keyboard", tag)
-        size = await driver.get_window_size()
-        w, h = size.get("width", 375), size.get("height", 667)
-        await tap_coord(driver, w - 30, h - 40)
+    # Step 4: Press keyboard Search key (send \n to trigger search)
+    search_fields = await find_elements(driver, "class name", "XCUIElementTypeSearchField")
+    if search_fields:
+        sf_id = search_fields[0].get("ELEMENT") or list(search_fields[0].values())[0]
+        logger.info("%s Sending Enter key to trigger keyboard search", tag)
+        try:
+            await driver.type_text(sf_id, "\n")
+        except Exception:
+            logger.warning("%s Enter key failed, trying keyboard button", tag)
+            keyboards = await find_elements(driver, "class name", "XCUIElementTypeKeyboard")
+            if keyboards:
+                btns = await find_elements(driver, "class name", "XCUIElementTypeButton")
+                for btn in btns:
+                    bid = btn.get("ELEMENT") or list(btn.values())[0]
+                    try:
+                        a = await driver._request(
+                            "GET", f"/session/{driver._session_id}/element/{bid}/attribute/label",
+                        )
+                        lbl = a.get("value", "")
+                        if lbl in ("搜索", "search", "Search"):
+                            logger.info("%s Found keyboard search button: '%s'", tag, lbl)
+                            await driver.tap_element(bid)
+                            break
+                    except Exception:
+                        pass
     await asyncio.sleep(5)
 
     # Step 5: Dismiss any popups
