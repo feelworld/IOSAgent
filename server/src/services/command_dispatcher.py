@@ -17,19 +17,30 @@ CANCELLABLE_STATUSES = {TaskStatus.PENDING, TaskStatus.DISPATCHED, TaskStatus.RU
 
 async def _inject_apple_account(device: Device, params: dict) -> dict:
     """Auto-inject Apple account credentials into params if not already present."""
-    if params.get("apple_id"):
-        return params
-
+    from server.src.models.apple_account import AppleAccount
     from server.src.services.apple_account_service import get_next_account
     from server.src.utils.crypto import decrypt_aes256
 
+    params = dict(params)
+
+    if params.get("apple_id") and not params.get("apple_password"):
+        account = await AppleAccount.find_one(AppleAccount.email == params["apple_id"])
+        if account:
+            params["apple_password"] = decrypt_aes256(account.encrypted_password)
+            device.current_apple_id = account.id
+            await device.save()
+            logger.info("Injected password for manually selected %s on device %s",
+                        account.email, device.device_uid)
+        return params
+
+    if params.get("apple_id") and params.get("apple_password"):
+        return params
+
     account = await get_next_account(device.id)
     if account:
-        params = dict(params)
         params["apple_id"] = account.email
         params["apple_password"] = decrypt_aes256(account.encrypted_password)
-        logger.info("Injected Apple account %s for device %s", account.email, device.device_uid)
-
+        logger.info("Auto-injected Apple account %s for device %s", account.email, device.device_uid)
         device.current_apple_id = account.id
         await device.save()
 

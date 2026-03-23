@@ -98,6 +98,17 @@ export const useAccountStore = defineStore('account', () => {
     return res.data
   }
 
+  async function fetchDeviceAccounts(deviceId: string): Promise<AccountItem[]> {
+    const res = await client.get(`/apple-accounts/by-device/${deviceId}`)
+    const data = res.data?.data || res.data
+    return Array.isArray(data) ? data : []
+  }
+
+  async function unbindAndRefill(accountId: string) {
+    const res = await client.post(`/apple-accounts/${accountId}/unbind-and-refill`)
+    return res.data?.data || res.data
+  }
+
   return {
     accounts,
     total,
@@ -110,5 +121,7 @@ export const useAccountStore = defineStore('account', () => {
     disableAccount,
     enableAccount,
     unbindAccount,
+    fetchDeviceAccounts,
+    unbindAndRefill,
   }
 })

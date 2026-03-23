@@ -1,23 +1,29 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ref, computed, onMounted, watch } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useDeviceStore, type DeviceItem } from '../stores/device'
 import { useTaskStore } from '../stores/task'
+import { useAccountStore, type AccountItem } from '../stores/account'
 
 const store = useDeviceStore()
 const taskStore = useTaskStore()
+const accountStore = useAccountStore()
 const filterStatus = ref('')
 const currentPage = ref(1)
 const pageSize = ref(20)
 const selectedDevices = ref<DeviceItem[]>([])
 
+// ── Dispatch dialog ──
 const dispatchVisible = ref(false)
 const dispatchForm = ref({
   action: 'login',
   app_name: '',
+  apple_id: '',
   timeout: 300,
 })
 const dispatching = ref(false)
+const deviceAccounts = ref<AccountItem[]>([])
+const loadingAccounts = ref(false)
 
 const actionOptions = [
   { label: '登录 Apple ID', value: 'login' },
@@ -25,18 +31,38 @@ const actionOptions = [
   { label: '登录 + 下载 (完整流程)', value: 'full_flow' },
 ]
 
+const needsLogin = computed(() =>
+  ['login', 'full_flow'].includes(dispatchForm.value.action)
+)
+const needsAppName = computed(() =>
+  ['search_download', 'full_flow'].includes(dispatchForm.value.action)
+)
+
 function handleSelectionChange(rows: DeviceItem[]) {
   selectedDevices.value = rows
 }
 
-function openDispatchDialog() {
-  dispatchForm.value = { action: 'login', app_name: '', timeout: 300 }
+async function openDispatchDialog() {
+  dispatchForm.value = { action: 'login', app_name: '', apple_id: '', timeout: 300 }
+  deviceAccounts.value = []
   dispatchVisible.value = true
+  await loadDispatchAccounts()
 }
 
-const needsAppName = computed(() =>
-  ['search_download', 'full_flow'].includes(dispatchForm.value.action)
-)
+async function loadDispatchAccounts() {
+  if (selectedDevices.value.length !== 1) {
+    deviceAccounts.value = []
+    return
+  }
+  loadingAccounts.value = true
+  try {
+    deviceAccounts.value = await accountStore.fetchDeviceAccounts(selectedDevices.value[0].id)
+  } catch {
+    deviceAccounts.value = []
+  } finally {
+    loadingAccounts.value = false
+  }
+}
 
 async function handleDispatch() {
   if (!selectedDevices.value.length) {
@@ -50,12 +76,17 @@ async function handleDispatch() {
 
   dispatching.value = true
   try {
-    const res = await taskStore.dispatchTask({
+    const payload: Record<string, any> = {
       device_ids: selectedDevices.value.map(d => d.id),
       action: dispatchForm.value.action,
-      app_name: dispatchForm.value.app_name || undefined,
       timeout_seconds: dispatchForm.value.timeout,
-    })
+    }
+    if (dispatchForm.value.app_name) payload.app_name = dispatchForm.value.app_name
+    if (dispatchForm.value.apple_id) {
+      payload.params = { apple_id: dispatchForm.value.apple_id }
+    }
+
+    const res = await taskStore.dispatchTask(payload)
     if (res.code === 0) {
       ElMessage.success(`已下发 ${selectedDevices.value.length} 台设备`)
       dispatchVisible.value = false
@@ -69,6 +100,51 @@ async function handleDispatch() {
   }
 }
 
+// ── Device account management dialog ──
+const accountDialogVisible = ref(false)
+const accountDialogDevice = ref<DeviceItem | null>(null)
+const managedAccounts = ref<AccountItem[]>([])
+const loadingManaged = ref(false)
+
+async function openAccountDialog(device: DeviceItem) {
+  accountDialogDevice.value = device
+  accountDialogVisible.value = true
+  await refreshManagedAccounts()
+}
+
+async function refreshManagedAccounts() {
+  if (!accountDialogDevice.value) return
+  loadingManaged.value = true
+  try {
+    managedAccounts.value = await accountStore.fetchDeviceAccounts(accountDialogDevice.value.id)
+  } catch {
+    managedAccounts.value = []
+  } finally {
+    loadingManaged.value = false
+  }
+}
+
+async function handleRemoveAccount(acc: AccountItem) {
+  try {
+    await ElMessageBox.confirm(
+      `确定要从该设备移除账号 ${acc.email} 吗？\n系统会自动从账号池补充新账号（如有可用）。`,
+      '移除账号',
+      { type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  try {
+    await accountStore.unbindAndRefill(acc.id)
+    ElMessage.success('已移除，系统自动补充中...')
+    await refreshManagedAccounts()
+    loadDevices()
+  } catch (e: any) {
+    ElMessage.error(e.message || '操作失败')
+  }
+}
+
+// ── Device list ──
 const statusOptions = [
   { label: '全部', value: '' },
   { label: '在线', value: 'online' },
@@ -85,6 +161,16 @@ const statusTagType = (status: string) => {
     busy: 'warning',
     error: 'danger',
     maintenance: '',
+  }
+  return map[status] || 'info'
+}
+
+const accountStatusTag = (status: string) => {
+  const map: Record<string, string> = {
+    active: 'success',
+    banned: 'danger',
+    suspended: 'warning',
+    unknown: 'info',
   }
   return map[status] || 'info'
 }
@@ -163,8 +249,11 @@ onMounted(() => {
       <el-table-column prop="ios_version" label="iOS" width="80" />
       <el-table-column label="当前账号" min-width="180">
         <template #default="{ row }">
-          <span v-if="row.current_apple_id" style="font-size: 12px">{{ row.current_apple_id }}</span>
-          <el-tag v-else type="info" size="small">未分配</el-tag>
+          <div style="display: flex; align-items: center; gap: 6px">
+            <span v-if="row.current_apple_id" style="font-size: 12px">{{ row.current_apple_id }}</span>
+            <el-tag v-else type="info" size="small">未分配</el-tag>
+            <el-button link type="primary" size="small" @click.stop="openAccountDialog(row)">管理</el-button>
+          </div>
         </template>
       </el-table-column>
       <el-table-column label="电量" width="70">
@@ -204,7 +293,8 @@ onMounted(() => {
       />
     </div>
 
-    <el-dialog v-model="dispatchVisible" title="下发任务" width="520px" destroy-on-close>
+    <!-- ── Dispatch dialog ── -->
+    <el-dialog v-model="dispatchVisible" title="下发任务" width="560px" destroy-on-close>
       <el-form label-width="100px">
         <el-form-item label="已选设备">
           <el-tag v-for="d in selectedDevices" :key="d.id" size="small" style="margin-right: 6px">
@@ -215,6 +305,21 @@ onMounted(() => {
           <el-select v-model="dispatchForm.action" style="width: 100%">
             <el-option v-for="opt in actionOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
           </el-select>
+        </el-form-item>
+        <el-form-item v-if="needsLogin" label="选择账号">
+          <el-select v-model="dispatchForm.apple_id" placeholder="系统自动分配" clearable style="width: 100%"
+            :loading="loadingAccounts">
+            <el-option label="系统自动分配" value="" />
+            <el-option
+              v-for="acc in deviceAccounts.filter(a => a.status === 'active')"
+              :key="acc.id"
+              :label="acc.email + (acc.is_primary ? ' (主)' : '')"
+              :value="acc.email"
+            />
+          </el-select>
+          <div v-if="selectedDevices.length > 1" style="font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px">
+            多台设备下发时使用系统自动分配
+          </div>
         </el-form-item>
         <el-form-item v-if="needsAppName" label="App 名称">
           <el-input v-model="dispatchForm.app_name" placeholder="例如: 微信" />
@@ -227,6 +332,41 @@ onMounted(() => {
         <el-button @click="dispatchVisible = false">取消</el-button>
         <el-button type="primary" :loading="dispatching" @click="handleDispatch">下发</el-button>
       </template>
+    </el-dialog>
+
+    <!-- ── Device account management dialog ── -->
+    <el-dialog
+      v-model="accountDialogVisible"
+      :title="`设备账号管理 - ${accountDialogDevice?.name || accountDialogDevice?.device_uid?.slice(0, 12) || ''}`"
+      width="600px"
+      destroy-on-close
+    >
+      <el-table :data="managedAccounts" v-loading="loadingManaged" stripe size="small">
+        <el-table-column prop="email" label="Apple ID" min-width="200" />
+        <el-table-column label="状态" width="80">
+          <template #default="{ row }">
+            <el-tag :type="accountStatusTag(row.status)" size="small">{{ row.status }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="主账号" width="70" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.is_primary" type="warning" size="small">主</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="最后使用" width="160">
+          <template #default="{ row }">
+            {{ row.last_used_at ? new Date(row.last_used_at).toLocaleString() : '-' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="80" align="center">
+          <template #default="{ row }">
+            <el-button link type="danger" size="small" @click="handleRemoveAccount(row)">移除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div v-if="!loadingManaged && !managedAccounts.length" style="text-align: center; padding: 20px; color: var(--el-text-color-secondary)">
+        该设备暂无绑定账号，系统将在下发任务时自动从账号池分配
+      </div>
     </el-dialog>
   </div>
 </template>

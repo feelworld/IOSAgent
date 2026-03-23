@@ -235,6 +235,56 @@ async def unbind_from_device(account_id: str, _user=Depends(get_current_user)):
     return _ok(await _serialize_account(account))
 
 
+# ── Device-scoped account management ──────────────────────────
+
+@router.get("/by-device/{device_id}")
+async def list_device_accounts(device_id: str, _user=Depends(get_current_user)):
+    """List all accounts bound to a specific device."""
+    oid = PydanticObjectId(device_id)
+    accounts = await AppleAccount.find(
+        AppleAccount.bound_device_id == oid,
+    ).sort("-is_primary").to_list()
+    return _ok([await _serialize_account(a) for a in accounts])
+
+
+@router.post("/{account_id}/unbind-and-refill")
+async def unbind_and_refill(account_id: str, _user=Depends(get_current_user)):
+    """Unbind account from device, then auto-replenish from pool if possible."""
+    account = await AppleAccount.get(PydanticObjectId(account_id))
+    if not account:
+        return _err(40401, "Apple account not found")
+
+    device_id = account.bound_device_id
+    if not device_id:
+        return _ok(await _serialize_account(account))
+
+    if account.is_primary:
+        device = await Device.get(device_id)
+        if device and device.current_apple_id == account.id:
+            device.current_apple_id = None
+            await device.save()
+
+    account.bound_device_id = None
+    account.is_primary = False
+    await account.save()
+
+    from server.src.services.apple_account_service import auto_assign_accounts
+    new_accounts = await auto_assign_accounts(device_id)
+
+    if new_accounts and device_id:
+        device = await Device.get(device_id)
+        if device and not device.current_apple_id:
+            primary = next((a for a in new_accounts if a.is_primary), None)
+            if primary:
+                device.current_apple_id = primary.id
+                await device.save()
+
+    return _ok({
+        "removed": await _serialize_account(account),
+        "device_accounts": [await _serialize_account(a) for a in new_accounts],
+    })
+
+
 # ── Enable / Disable ──────────────────────────────────────────
 
 @router.post("/{account_id}/disable")
