@@ -596,62 +596,75 @@ async def do_search_download(driver, params):
     # Step 5: Dismiss any popups
     await dismiss_popups(driver, tag)
 
-    # Step 6: Find the app in search results and tap GET/下载
-    logger.info("%s Looking for download button...", tag)
-    for attempt in range(3):
-        get_btn = await has_element(driver, "name", "获取")
-        if not get_btn:
-            get_btn = await has_element(driver, "name", "GET")
-        if not get_btn:
-            get_btn = await has_element(driver, "name", "iCloud")
-        if not get_btn:
-            get_btn = await has_element(driver, "name", "打开")
-            if get_btn:
-                logger.info("%s App already installed (打开/Open found)", tag)
+    # Step 6: Find the target app in search results and tap its GET button
+    logger.info("%s Looking for '%s' in search results...", tag, app_name)
+
+    for attempt in range(5):
+        source = await get_source_safe(driver)
+
+        # Log what we see for debugging
+        all_btns = await find_elements(driver, "class name", "XCUIElementTypeButton")
+        btn_labels = []
+        for btn in all_btns[:30]:
+            bid = btn.get("ELEMENT") or list(btn.values())[0]
+            try:
+                a = await driver._request(
+                    "GET", f"/session/{driver._session_id}/element/{bid}/attribute/label",
+                )
+                lbl = a.get("value", "")
+                if lbl:
+                    btn_labels.append(lbl)
+            except Exception:
+                pass
+        logger.info("%s Visible buttons: %s", tag, btn_labels[:20])
+
+        # Strategy A: Find app cells and locate the GET button for the target app
+        cells = await find_elements(driver, "class name", "XCUIElementTypeCell")
+        logger.info("%s Found %d cells in search results", tag, len(cells))
+
+        for cell in cells:
+            cid = cell.get("ELEMENT") or list(cell.values())[0]
+            try:
+                cell_label = await driver._request(
+                    "GET", f"/session/{driver._session_id}/element/{cid}/attribute/label",
+                )
+                cell_text = cell_label.get("value", "")
+            except Exception:
+                cell_text = ""
+
+            if app_name.lower() not in cell_text.lower():
+                try:
+                    cell_name = await driver._request(
+                        "GET", f"/session/{driver._session_id}/element/{cid}/attribute/name",
+                    )
+                    cell_text = cell_name.get("value", "")
+                except Exception:
+                    pass
+
+            if app_name.lower() in cell_text.lower():
+                logger.info("%s Found target app cell: '%s'", tag, cell_text[:60])
+                # Tap the cell to enter app detail page, then download from there
+                try:
+                    await driver.tap_element(cid)
+                    await asyncio.sleep(3)
+                    found = await _tap_download_button(driver, tag)
+                    if found:
+                        await _wait_download_complete(driver, tag)
+                        return
+                except Exception as e:
+                    logger.warning("%s Error tapping cell: %s", tag, e)
+                break
+
+        # Strategy B: Try to find GET/获取 buttons directly on screen
+        found = await _tap_download_button(driver, tag)
+        if found:
+            if found == "installed":
                 return
-            get_btn = await has_element(driver, "name", "Open")
-            if get_btn:
-                logger.info("%s App already installed (Open found)", tag)
-                return
-
-        if get_btn:
-            logger.info("%s Tapping download button", tag)
-            await tap_element(driver, get_btn)
-            await asyncio.sleep(3)
-
-            # Handle "Install" confirmation or Apple ID password prompt
-            install_btn = await has_element(driver, "name", "安装")
-            if not install_btn:
-                install_btn = await has_element(driver, "name", "Install")
-            if install_btn:
-                logger.info("%s Confirming install", tag)
-                await tap_element(driver, install_btn)
-                await asyncio.sleep(2)
-
-            await dismiss_popups(driver, tag)
-
-            # Wait for download to complete
-            logger.info("%s Waiting for download to complete...", tag)
-            for wait_round in range(30):
-                await asyncio.sleep(5)
-                open_btn = await has_element(driver, "name", "打开")
-                if not open_btn:
-                    open_btn = await has_element(driver, "name", "Open")
-                if open_btn:
-                    logger.info("%s Download complete!", tag)
-                    return
-
-                await dismiss_popups(driver, tag)
-
-                source = await get_source_safe(driver)
-                if "打开" in source or "Open" in source or "OPEN" in source:
-                    logger.info("%s Download complete (detected in source)", tag)
-                    return
-
-            logger.warning("%s Download may still be in progress after timeout", tag)
+            await _wait_download_complete(driver, tag)
             return
 
-        logger.info("%s Download button not found, attempt %d, scrolling...", tag, attempt + 1)
+        # Scroll down to find more results
+        logger.info("%s Target not found on screen, scrolling... (attempt %d)", tag, attempt + 1)
         size = await driver.get_window_size()
         w, h = size.get("width", 375), size.get("height", 667)
         actions = {"actions": [{"type": "pointer", "id": "finger1",
@@ -664,7 +677,51 @@ async def do_search_download(driver, params):
         await driver._request("POST", f"/session/{driver._session_id}/actions", json=actions)
         await asyncio.sleep(3)
 
-    logger.warning("%s Could not find download button for '%s'", tag, app_name)
+    logger.warning("%s Could not find '%s' after all attempts", tag, app_name)
+
+
+async def _tap_download_button(driver, tag):
+    """Try to find and tap a download button. Returns 'tapped'/'installed'/None."""
+    for name in ["获取", "GET", "iCloud"]:
+        btn = await has_element(driver, "name", name)
+        if btn:
+            logger.info("%s Tapping download button: '%s'", tag, name)
+            await tap_element(driver, btn)
+            await asyncio.sleep(3)
+
+            install_btn = await has_element(driver, "name", "安装")
+            if not install_btn:
+                install_btn = await has_element(driver, "name", "Install")
+            if install_btn:
+                logger.info("%s Confirming install", tag)
+                await tap_element(driver, install_btn)
+                await asyncio.sleep(2)
+
+            await dismiss_popups(driver, tag)
+            return "tapped"
+
+    for name in ["打开", "Open", "OPEN"]:
+        btn = await has_element(driver, "name", name)
+        if btn:
+            logger.info("%s App already installed ('%s' found)", tag, name)
+            return "installed"
+
+    return None
+
+
+async def _wait_download_complete(driver, tag):
+    """Wait for download to finish (Open button appears)."""
+    logger.info("%s Waiting for download to complete...", tag)
+    for _ in range(30):
+        await asyncio.sleep(5)
+        for name in ["打开", "Open"]:
+            btn = await has_element(driver, "name", name)
+            if btn:
+                logger.info("%s Download complete!", tag)
+                return
+        await dismiss_popups(driver, tag)
+
+    logger.warning("%s Download may still be in progress after timeout", tag)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
