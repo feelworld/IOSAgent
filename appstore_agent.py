@@ -687,7 +687,7 @@ async def do_search_download(driver, params):
 
 async def _tap_download_button(driver, tag, apple_password=""):
     """Try to find and tap a download button. Returns 'tapped'/'installed'/None."""
-    for name in ["获取", "GET", "iCloud"]:
+    for name in ["获取", "GET", "iCloud", "重新下载", "Redownload", "下载", "Download"]:
         btn = await has_element(driver, "name", name)
         if btn:
             logger.info("%s Tapping download button: '%s'", tag, name)
@@ -723,6 +723,23 @@ async def _tap_download_button(driver, tag, apple_password=""):
         if btn:
             logger.info("%s App already installed ('%s' found)", tag, name)
             return "installed"
+
+    # Debug: log all visible buttons so we can identify unknown download buttons
+    all_btns = await find_elements(driver, "class name", "XCUIElementTypeButton")
+    labels = []
+    for b in all_btns[:25]:
+        bid = b.get("ELEMENT") or list(b.values())[0]
+        try:
+            a = await driver._request(
+                "GET", f"/session/{driver._session_id}/element/{bid}/attribute/label",
+            )
+            lbl = a.get("value", "")
+            if lbl:
+                labels.append(lbl)
+        except Exception:
+            pass
+    if labels:
+        logger.info("%s No download btn found. Visible buttons: %s", tag, labels)
 
     return None
 
