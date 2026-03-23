@@ -16,12 +16,20 @@ export interface ConfigListParams {
 }
 
 export async function getConfigs(params: ConfigListParams): Promise<ConfigItem[]> {
-  const { data } = await client.get<ConfigItem[]>('/configs', { params })
-  return data
+  const { data: resp } = await client.get('/configs', { params })
+  const list = resp?.data ?? resp
+  return Array.isArray(list) ? list : []
 }
 
 export async function updateConfigs(configs: ConfigItem[]): Promise<void> {
-  await client.put('/configs', { configs })
+  for (const cfg of configs) {
+    await client.put('/configs', {
+      key: cfg.key,
+      value: cfg.value,
+      scope: cfg.scope,
+      scope_id: cfg.scope_id || undefined,
+    })
+  }
 }
 
 export async function getDeviceGroups(): Promise<{ id: string; name: string }[]> {

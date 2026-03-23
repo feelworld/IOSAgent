@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 
 from beanie import PydanticObjectId
@@ -22,12 +23,22 @@ def _err(code: int, message: str) -> dict:
     return {"code": code, "message": message, "data": None}
 
 
-def _serialize_account(acc: AppleAccount) -> dict:
+async def _serialize_account(acc: AppleAccount) -> dict:
+    bound_device_name = None
+    bound_device_uid = None
+    if acc.bound_device_id:
+        device = await Device.get(acc.bound_device_id)
+        if device:
+            bound_device_name = device.name or device.device_uid
+            bound_device_uid = device.device_uid
+
     return {
         "id": str(acc.id),
         "email": acc.email,
         "status": acc.status.value if hasattr(acc.status, "value") else acc.status,
         "bound_device_id": str(acc.bound_device_id) if acc.bound_device_id else None,
+        "bound_device_name": bound_device_name,
+        "bound_device_uid": bound_device_uid,
         "is_primary": acc.is_primary,
         "pool_group": acc.pool_group,
         "last_used_at": acc.last_used_at.isoformat() if acc.last_used_at else None,
@@ -39,7 +50,12 @@ def _serialize_account(acc: AppleAccount) -> dict:
 class CreateAccountRequest(BaseModel):
     email: str
     password: str
-    pool_group: str
+    pool_group: str = "default"
+
+
+class BatchImportRequest(BaseModel):
+    accounts_text: str
+    pool_group: str = "default"
 
 
 class BindRequest(BaseModel):
@@ -47,10 +63,36 @@ class BindRequest(BaseModel):
     is_primary: bool = False
 
 
+# ── Stats ──────────────────────────────────────────────────────
+
+@router.get("/stats")
+async def account_stats(_user=Depends(get_current_user)):
+    total = await AppleAccount.find().count()
+    active = await AppleAccount.find(AppleAccount.status == AppleAccountStatus.ACTIVE).count()
+    banned = await AppleAccount.find(AppleAccount.status == AppleAccountStatus.BANNED).count()
+    suspended = await AppleAccount.find(AppleAccount.status == AppleAccountStatus.SUSPENDED).count()
+    assigned = await AppleAccount.find(AppleAccount.bound_device_id != None).count()
+    unassigned = await AppleAccount.find(
+        AppleAccount.bound_device_id == None,
+        AppleAccount.status == AppleAccountStatus.ACTIVE,
+    ).count()
+    return _ok({
+        "total": total,
+        "active": active,
+        "banned": banned,
+        "suspended": suspended,
+        "assigned": assigned,
+        "unassigned": unassigned,
+    })
+
+
+# ── List ───────────────────────────────────────────────────────
+
 @router.get("")
 async def list_accounts(
     status: Optional[str] = Query(None),
     pool_group: Optional[str] = Query(None),
+    bound: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     _user=Depends(get_current_user),
@@ -62,16 +104,24 @@ async def list_accounts(
         filters["pool_group"] = pool_group
 
     query = AppleAccount.find(filters) if filters else AppleAccount.find()
+
+    if bound == "yes":
+        query = query.find(AppleAccount.bound_device_id != None)
+    elif bound == "no":
+        query = query.find(AppleAccount.bound_device_id == None)
+
     total = await query.count()
     items = await query.sort("-created_at").skip((page - 1) * size).limit(size).to_list()
 
     return _ok({
-        "items": [_serialize_account(a) for a in items],
+        "items": [await _serialize_account(a) for a in items],
         "total": total,
         "page": page,
         "size": size,
     })
 
+
+# ── Create single ─────────────────────────────────────────────
 
 @router.post("")
 async def create_account(body: CreateAccountRequest, _user=Depends(get_current_user)):
@@ -82,11 +132,58 @@ async def create_account(body: CreateAccountRequest, _user=Depends(get_current_u
     account = AppleAccount(
         email=body.email,
         encrypted_password=encrypt_aes256(body.password),
+        status=AppleAccountStatus.ACTIVE,
         pool_group=body.pool_group,
     )
     await account.insert()
-    return _ok(_serialize_account(account))
+    return _ok(await _serialize_account(account))
 
+
+# ── Batch import ───────────────────────────────────────────────
+
+@router.post("/batch-import")
+async def batch_import(body: BatchImportRequest, _user=Depends(get_current_user)):
+    """Import accounts in bulk. Each line: email----password"""
+    lines = [l.strip() for l in body.accounts_text.strip().splitlines() if l.strip()]
+    imported, skipped, errors = 0, 0, []
+
+    for i, line in enumerate(lines, 1):
+        sep = "----" if "----" in line else (":" if ":" in line else None)
+        if not sep:
+            errors.append(f"Line {i}: invalid format (use email----password)")
+            continue
+
+        parts = line.split(sep, 1)
+        if len(parts) != 2 or not parts[0].strip() or not parts[1].strip():
+            errors.append(f"Line {i}: invalid format")
+            continue
+
+        email = parts[0].strip()
+        password = parts[1].strip()
+
+        existing = await AppleAccount.find_one(AppleAccount.email == email)
+        if existing:
+            skipped += 1
+            continue
+
+        account = AppleAccount(
+            email=email,
+            encrypted_password=encrypt_aes256(password),
+            status=AppleAccountStatus.ACTIVE,
+            pool_group=body.pool_group,
+        )
+        await account.insert()
+        imported += 1
+
+    return _ok({
+        "imported": imported,
+        "skipped": skipped,
+        "errors": errors,
+        "total_lines": len(lines),
+    })
+
+
+# ── Bind / Unbind ─────────────────────────────────────────────
 
 @router.post("/{account_id}/bind")
 async def bind_to_device(
@@ -117,7 +214,7 @@ async def bind_to_device(
         device.current_apple_id = account.id
         await device.save()
 
-    return _ok(_serialize_account(account))
+    return _ok(await _serialize_account(account))
 
 
 @router.post("/{account_id}/unbind")
@@ -135,4 +232,29 @@ async def unbind_from_device(account_id: str, _user=Depends(get_current_user)):
     account.bound_device_id = None
     account.is_primary = False
     await account.save()
-    return _ok(_serialize_account(account))
+    return _ok(await _serialize_account(account))
+
+
+# ── Enable / Disable ──────────────────────────────────────────
+
+@router.post("/{account_id}/disable")
+async def disable_account(account_id: str, _user=Depends(get_current_user)):
+    account = await AppleAccount.get(PydanticObjectId(account_id))
+    if not account:
+        return _err(40401, "Apple account not found")
+
+    account.status = AppleAccountStatus.SUSPENDED
+    await account.save()
+    return _ok(await _serialize_account(account))
+
+
+@router.post("/{account_id}/enable")
+async def enable_account(account_id: str, _user=Depends(get_current_user)):
+    account = await AppleAccount.get(PydanticObjectId(account_id))
+    if not account:
+        return _err(40401, "Apple account not found")
+
+    account.status = AppleAccountStatus.ACTIVE
+    account.banned_at = None
+    await account.save()
+    return _ok(await _serialize_account(account))

@@ -40,6 +40,7 @@ class WDAKeeper:
         self.udid = udid
         self.wifi_ip = wifi_ip
         self._ssh = None
+        self._xcuitest_refs = []
 
     def _connect_ssh(self):
         import paramiko
@@ -204,13 +205,14 @@ class WDAKeeper:
             consumer = XCUITestPlanConsumer(
                 pid, svc.pctl, ctrl_dvt, ctrl_chan, main_dvt, main_chan, config,
             )
-            asyncio.get_event_loop().create_task(consumer.consume())
+            consume_task = asyncio.get_event_loop().create_task(consumer.consume())
+
+            self._xcuitest_refs = [ld, svc, ctrl_dvt, ctrl_chan, main_dvt, main_chan, consumer, consume_task]
 
             for _ in range(10):
                 await asyncio.sleep(3)
                 if self.is_wda_healthy():
                     logger.info("WDA restarted successfully")
-                    self._freeze_testmanagerd()
                     return True
             return False
 

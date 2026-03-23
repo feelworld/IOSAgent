@@ -32,6 +32,8 @@ import tarfile
 import urllib.request
 from dataclasses import dataclass, field
 
+import aiohttp
+
 logger = logging.getLogger(__name__)
 
 WDA_BUNDLE_ID = "com.facebook.WebDriverAgentRunner.xctrunner"
@@ -68,6 +70,7 @@ class USBDevice:
     forward_proc: subprocess.Popen | None = field(default=None, repr=False)
     keeper_proc: subprocess.Popen | None = field(default=None, repr=False)
     ssh_tunnel: object | None = field(default=None, repr=False)
+    _xcuitest_refs: list = field(default_factory=list, repr=False)
     # Hardware identifiers
     serial_number: str = ""
     imei: str = ""
@@ -100,6 +103,7 @@ class USBMonitor:
         self._next_port = LOCAL_PORT_BASE
         self._running = False
         self._task: asyncio.Task | None = None
+        self.active_tasks: int = 0
         self._wda_ipa_path = self._resolve_ipa_path(wda_ipa_path)
         self._appsync_deb_path = self._resolve_ipa_path(appsync_deb_path)
         self._scan_interval = scan_interval
@@ -147,6 +151,9 @@ class USBMonitor:
 
     async def _scan_loop(self):
         while self._running:
+            if self.active_tasks > 0:
+                await asyncio.sleep(2)
+                continue
             try:
                 await self._scan_once()
             except Exception as e:
@@ -310,26 +317,24 @@ class USBMonitor:
         if wifi_ip:
             dev.wifi_ip = wifi_ip
 
-        # Step 6: Launch WDA via XCUITest (using SSH to push config, bypassing HouseArrest)
-        if not dev.wda_running:
-            logger.info("   Launching WDA via XCUITest...")
-            launched = await self._launch_wda_xcuitest(dev)
-            if launched:
-                dev.wda_running = True
-                logger.info("   WDA launched via XCUITest!")
-            else:
-                logger.warning("   XCUITest launch failed, waiting for WDA...")
-                for attempt in range(8):
-                    await asyncio.sleep(WDA_STARTUP_WAIT)
-                    check_url = self._get_wda_url(dev) or wda_url
-                    dev.wda_running = await self._check_wda(check_url)
-                    if dev.wda_running:
-                        break
-                    logger.info("   Waiting for WDA... (attempt %d/8)", attempt + 1)
+        # Step 6: Always launch WDA via XCUITest to establish DTX session
+        # (even if WDA appears running — it needs an active DTX session to stay alive)
+        logger.info("   Launching WDA via XCUITest...")
+        launched = await self._launch_wda_xcuitest(dev)
+        if launched:
+            dev.wda_running = True
+            logger.info("   WDA launched via XCUITest!")
+        elif dev.wda_running:
+            logger.info("   XCUITest launch failed but WDA is responding (may die soon)")
         else:
-            logger.info("   WDA already running")
-            # Still freeze testmanagerd to protect WDA from USB disconnect
-            await self._freeze_testmanagerd(dev)
+            logger.warning("   XCUITest launch failed, waiting for WDA...")
+            for attempt in range(8):
+                await asyncio.sleep(WDA_STARTUP_WAIT)
+                check_url = self._get_wda_url(dev) or wda_url
+                dev.wda_running = await self._check_wda(check_url)
+                if dev.wda_running:
+                    break
+                logger.info("   Waiting for WDA... (attempt %d/8)", attempt + 1)
 
         # Step 7: Setup SSH tunnel (now that WDA is running)
         if dev.wda_running and dev.wifi_ip:
@@ -337,16 +342,9 @@ class USBMonitor:
             if not tunnel_ok:
                 logger.info("   SSH tunnel setup failed (will use USB port forward)")
 
-        # Step 8: Start keeper (monitors health + can restart via XCUITest)
-        if dev.wda_running:
-            existing_keeper = self._find_existing_keeper(udid)
-            if existing_keeper:
-                logger.info("   Keeper process alive (pid=%d)", existing_keeper)
-            elif dev.wifi_ip:
-                logger.info("   Starting WDA keeper...")
-                self._start_keeper(dev)
-            else:
-                logger.warning("   No WiFi IP — keeper not started (WDA needs USB)")
+        # Step 8: Keeper not needed for USB-connected devices
+        # (usb_monitor handles health checks via USB; keeper uses WiFi SSH which can
+        #  falsely detect WDA as dead and kill the active XCUITest DTX session)
 
         if not dev.wda_running:
             logger.warning("   WDA failed to start on %s", dev.name)
@@ -637,13 +635,14 @@ class USBMonitor:
             consumer = XCUITestPlanConsumer(
                 pid, svc.pctl, ctrl_dvt, ctrl_chan, main_dvt, main_chan, config,
             )
-            asyncio.get_event_loop().create_task(consumer.consume())
+            consume_task = asyncio.get_event_loop().create_task(consumer.consume())
+
+            dev._xcuitest_refs = [ld, svc, ctrl_dvt, ctrl_chan, main_dvt, main_chan, consumer, consume_task]
 
             for i in range(10):
                 await asyncio.sleep(3)
                 check_url = self._get_wda_url(dev) or f"http://localhost:{dev.local_port}"
                 if await self._check_wda(check_url):
-                    await self._freeze_testmanagerd(dev)
                     return True
             return False
 
@@ -1171,7 +1170,11 @@ class USBMonitor:
     # ── SSH tunnel (WiFi access to WDA) ──────────────────────────────
 
     def _get_wda_url(self, dev: USBDevice) -> str | None:
-        """Return the best URL to reach WDA for this device."""
+        """Return the best URL to reach WDA for this device.
+        Prefers USB port forward (stable).
+        """
+        if dev.usb_connected and dev.forward_proc and dev.forward_proc.poll() is None and dev.local_port:
+            return f"http://localhost:{dev.local_port}"
         if dev.ssh_tunnel and dev.ssh_tunnel.is_alive():
             return f"http://localhost:{dev.ssh_tunnel.local_port}"
         if dev.forward_proc and dev.forward_proc.poll() is None and dev.local_port:
@@ -1322,23 +1325,21 @@ class USBMonitor:
     @staticmethod
     async def _check_wda(wda_url: str) -> bool:
         try:
-            loop = asyncio.get_event_loop()
-            def _check():
-                r = urllib.request.urlopen(f"{wda_url}/status", timeout=WDA_CHECK_TIMEOUT)
-                data = json.loads(r.read())
-                return data.get("value", {}).get("ready", False)
-            return await loop.run_in_executor(None, _check)
+            timeout = aiohttp.ClientTimeout(total=WDA_CHECK_TIMEOUT)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(f"{wda_url}/status") as resp:
+                    data = await resp.json()
+                    return data.get("value", {}).get("ready", False)
         except Exception:
             return False
 
     @staticmethod
     async def _get_wifi_ip(wda_url: str) -> str:
         try:
-            loop = asyncio.get_event_loop()
-            def _get():
-                r = urllib.request.urlopen(f"{wda_url}/status", timeout=WDA_CHECK_TIMEOUT)
-                data = json.loads(r.read())
-                return data.get("value", {}).get("ios", {}).get("ip", "")
-            return await loop.run_in_executor(None, _get)
+            timeout = aiohttp.ClientTimeout(total=WDA_CHECK_TIMEOUT)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(f"{wda_url}/status") as resp:
+                    data = await resp.json()
+                    return data.get("value", {}).get("ios", {}).get("ip", "")
         except Exception:
             return ""

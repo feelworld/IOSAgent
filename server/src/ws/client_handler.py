@@ -201,7 +201,11 @@ async def _handle_task_error(payload: dict):
     from server.src.models.device import Device, DeviceStatus
 
     task_uid = payload.get("task_uid")
-    error_msg = payload.get("error", "Unknown error")
+    raw_error = payload.get("error", "Unknown error")
+    if isinstance(raw_error, dict):
+        error_msg = raw_error.get("message", str(raw_error))
+    else:
+        error_msg = str(raw_error)
     is_timeout = payload.get("timeout", False)
 
     if not task_uid:
@@ -211,6 +215,10 @@ async def _handle_task_error(payload: dict):
     if not task:
         logger.warning(f"task.error for unknown task_uid: {task_uid}")
         return
+
+    error_code = ""
+    if isinstance(raw_error, dict):
+        error_code = raw_error.get("code", "")
 
     now = datetime.now(timezone.utc)
     task.status = TaskStatus.TIMEOUT if is_timeout else TaskStatus.FAILED
@@ -223,6 +231,13 @@ async def _handle_task_error(payload: dict):
         device.status = DeviceStatus.ONLINE
         device.current_task_id = None
         await device.save()
+
+    if error_code == "APPLE_ID_BANNED" and task.device_id:
+        try:
+            from server.src.services.apple_account_service import auto_switch_account
+            await auto_switch_account(task.device_id, error_msg)
+        except Exception as e:
+            logger.error("auto_switch_account failed for device %s: %s", task.device_id, e)
 
     await broadcast_to_admins({
         "type": "task.completed",

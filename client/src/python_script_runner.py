@@ -45,12 +45,20 @@ class PythonScriptRunner:
         result = PythonScriptResult()
         start_time = time.monotonic()
 
-        try:
-            await self.driver.create_session()
-        except Exception as e:
-            result.error_code = "WDA_UNREACHABLE"
-            result.error_message = str(e)
-            return result
+        if not self.driver._session_id:
+            for attempt in range(5):
+                try:
+                    await self.driver.create_session("")
+                    logger.info("WDA session created on attempt %d", attempt + 1)
+                    break
+                except Exception as e:
+                    if attempt < 4:
+                        logger.warning("WDA session creation failed (attempt %d/5): %s", attempt + 1, e)
+                        await asyncio.sleep(2)
+                    else:
+                        result.error_code = "WDA_UNREACHABLE"
+                        result.error_message = f"WDA request failed: {e}"
+                        return result
 
         namespace: dict = {
             "driver": self.driver,
@@ -85,8 +93,12 @@ class PythonScriptRunner:
             result.error_code = "CANCELLED"
             result.error_message = "Script execution was cancelled"
         except Exception as e:
-            result.error_code = "SCRIPT_ERROR"
-            result.error_message = f"{type(e).__name__}: {e}\n{traceback.format_exc()}"
+            if type(e).__name__ == "BannedAccountError":
+                result.error_code = "APPLE_ID_BANNED"
+                result.error_message = str(e)
+            else:
+                result.error_code = "SCRIPT_ERROR"
+                result.error_message = f"{type(e).__name__}: {e}\n{traceback.format_exc()}"
         finally:
             result.duration_seconds = round(time.monotonic() - start_time, 2)
 

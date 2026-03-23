@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -19,11 +20,11 @@ async def batch_dispatch(
     timeout_seconds: int = 300,
     source: TaskSource = TaskSource.MANUAL,
 ) -> list[Task]:
-    """Dispatch a command to multiple devices."""
-    tasks: list[Task] = []
-    for device_id in device_ids:
+    """Dispatch a command to multiple devices concurrently."""
+
+    async def _dispatch_one(device_id: PydanticObjectId) -> Optional[Task]:
         try:
-            task = await command_dispatcher.dispatch_command(
+            return await command_dispatcher.dispatch_command(
                 device_id=device_id,
                 script_id=script_id,
                 script_version=script_version,
@@ -31,10 +32,12 @@ async def batch_dispatch(
                 timeout_seconds=timeout_seconds,
                 source=source,
             )
-            tasks.append(task)
         except Exception as e:
-            logger.error(f"Failed to dispatch to device {device_id}: {e}")
-    return tasks
+            logger.error("Failed to dispatch to device %s: %s", device_id, e)
+            return None
+
+    results = await asyncio.gather(*[_dispatch_one(d) for d in device_ids])
+    return [t for t in results if t is not None]
 
 
 async def cleanup_expired_tasks(expire_seconds: int = 3600) -> int:

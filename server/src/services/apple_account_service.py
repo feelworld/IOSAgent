@@ -10,6 +10,77 @@ from server.src.ws.admin_handler import broadcast_to_admins
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_MAX_ACCOUNTS_PER_DEVICE = 3
+
+
+async def get_max_accounts_per_device() -> int:
+    """Read global config for max accounts per device, fallback to default."""
+    try:
+        from server.src.models.configuration import Configuration
+        cfg = await Configuration.find_one(Configuration.key == "max_accounts_per_device")
+        if cfg:
+            return int(cfg.value)
+    except Exception:
+        pass
+    return DEFAULT_MAX_ACCOUNTS_PER_DEVICE
+
+
+async def auto_assign_accounts(device_id: PydanticObjectId) -> list[AppleAccount]:
+    """Assign accounts from the pool to a device until it reaches the limit."""
+    max_per_device = await get_max_accounts_per_device()
+
+    current = await AppleAccount.find(
+        AppleAccount.bound_device_id == device_id,
+        AppleAccount.status == AppleAccountStatus.ACTIVE,
+    ).to_list()
+
+    need = max_per_device - len(current)
+    if need <= 0:
+        return current
+
+    available = await AppleAccount.find(
+        AppleAccount.bound_device_id == None,
+        AppleAccount.status == AppleAccountStatus.ACTIVE,
+    ).sort("+created_at").limit(need).to_list()
+
+    device = await Device.get(device_id)
+    for acc in available:
+        acc.bound_device_id = device_id
+        if not current:
+            acc.is_primary = True
+            if device:
+                device.current_apple_id = acc.id
+        await acc.save()
+        current.append(acc)
+
+    if device and available:
+        await device.save()
+
+    logger.info("auto_assign: device %s now has %d account(s) (assigned %d new)",
+                device_id, len(current), len(available))
+    return current
+
+
+async def get_next_account(device_id: PydanticObjectId) -> AppleAccount | None:
+    """Get the next usable account for a device. Auto-assigns from pool if needed."""
+    accounts = await AppleAccount.find(
+        AppleAccount.bound_device_id == device_id,
+        AppleAccount.status == AppleAccountStatus.ACTIVE,
+    ).sort("+last_used_at").to_list()
+
+    if not accounts:
+        assigned = await auto_assign_accounts(device_id)
+        accounts = [a for a in assigned if a.status == AppleAccountStatus.ACTIVE]
+
+    if not accounts:
+        logger.warning("get_next_account: no accounts available for device %s", device_id)
+        return None
+
+    chosen = accounts[0]
+    chosen.last_used_at = datetime.now(timezone.utc)
+    await chosen.save()
+    return chosen
+
 
 async def auto_switch_account(device_id: PydanticObjectId, reason: str) -> AppleAccount | None:
     """When an Apple ID is banned, find a backup from the same pool and switch."""

@@ -38,7 +38,7 @@ async def list_devices(
         "code": 0,
         "message": "success",
         "data": {
-            "items": [_serialize_device(d) for d in items],
+            "items": [await _serialize_device(d) for d in items],
             "total": total,
             "page": page,
             "size": size,
@@ -59,10 +59,26 @@ async def get_device(device_id: str, _user=Depends(get_current_user)):
     device = await Device.get(PydanticObjectId(device_id))
     if not device:
         return {"code": 40401, "message": "Device not found", "data": None}
-    return {"code": 0, "message": "success", "data": _serialize_device(device)}
+    return {"code": 0, "message": "success", "data": await _serialize_device(device)}
 
 
-def _serialize_device(device: Device) -> dict:
+async def _serialize_device(device: Device) -> dict:
+    current_apple_email = None
+    if device.current_apple_id:
+        from server.src.models.apple_account import AppleAccount
+        acct = await AppleAccount.get(device.current_apple_id)
+        if acct:
+            current_apple_email = acct.email
+
+    if not current_apple_email:
+        from server.src.models.apple_account import AppleAccount, AppleAccountStatus
+        acct = await AppleAccount.find_one(
+            AppleAccount.bound_device_id == device.id,
+            AppleAccount.status == AppleAccountStatus.ACTIVE,
+        )
+        if acct:
+            current_apple_email = acct.email
+
     return {
         "id": str(device.id),
         "device_uid": device.device_uid,
@@ -74,6 +90,7 @@ def _serialize_device(device: Device) -> dict:
         "network_type": device.network_type,
         "wda_url": device.wda_url,
         "companion_id": device.companion_id,
+        "current_apple_id": current_apple_email,
         "current_task_id": str(device.current_task_id) if device.current_task_id else None,
         "last_heartbeat": device.last_heartbeat.isoformat() if device.last_heartbeat else None,
         "registered_at": device.registered_at.isoformat() if device.registered_at else None,

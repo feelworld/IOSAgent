@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Optional
 
@@ -31,10 +32,10 @@ class WDADriver:
         self.wda_url = wda_url.rstrip("/")
         self.device_uid = device_uid
         self._session_id: Optional[str] = None
-        self._timeout = aiohttp.ClientTimeout(total=30)
+        self._timeout = aiohttp.ClientTimeout(total=15)
 
     async def _request(self, method: str, path: str, json: Any = None) -> dict:
-        """Make HTTP request to WDA."""
+        """Make HTTP request to WDA. Each call uses a fresh connection."""
         url = f"{self.wda_url}{path}"
         try:
             async with aiohttp.ClientSession(timeout=self._timeout) as session:
@@ -47,21 +48,24 @@ class WDADriver:
             raise WDAConnectionError(
                 f"Cannot connect to WDA at {self.wda_url}: {e}"
             ) from e
+        except asyncio.TimeoutError:
+            raise WDAError(f"WDA request timed out after 15s: {method} {path}")
         except aiohttp.ClientError as e:
-            raise WDAError(f"WDA request failed: {e}") from e
+            raise WDAError(f"WDA request failed ({type(e).__name__}): {e}") from e
 
     async def create_session(
         self, bundle_id: str = "com.apple.Preferences"
     ) -> str:
         """Create a new WDA session."""
+        caps = {}
+        if bundle_id:
+            caps["bundleId"] = bundle_id
         data = await self._request(
             "POST",
             "/session",
             json={
                 "capabilities": {
-                    "alwaysMatch": {
-                        "bundleId": bundle_id,
-                    }
+                    "alwaysMatch": caps,
                 }
             },
         )

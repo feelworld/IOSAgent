@@ -15,6 +15,27 @@ logger = logging.getLogger(__name__)
 CANCELLABLE_STATUSES = {TaskStatus.PENDING, TaskStatus.DISPATCHED, TaskStatus.RUNNING}
 
 
+async def _inject_apple_account(device: Device, params: dict) -> dict:
+    """Auto-inject Apple account credentials into params if not already present."""
+    if params.get("apple_id"):
+        return params
+
+    from server.src.services.apple_account_service import get_next_account
+    from server.src.utils.crypto import decrypt_aes256
+
+    account = await get_next_account(device.id)
+    if account:
+        params = dict(params)
+        params["apple_id"] = account.email
+        params["apple_password"] = decrypt_aes256(account.encrypted_password)
+        logger.info("Injected Apple account %s for device %s", account.email, device.device_uid)
+
+        device.current_apple_id = account.id
+        await device.save()
+
+    return params
+
+
 async def dispatch_command(
     device_id: PydanticObjectId,
     script_id: PydanticObjectId,
@@ -38,13 +59,17 @@ async def dispatch_command(
             f"ScriptVersion not found: script_id={script_id}, version={script_version}"
         )
 
+    effective_params = await _inject_apple_account(device, params or {})
+    effective_params["ios_version"] = device.ios_version or ""
+    effective_params["device_uid"] = device.device_uid
+
     task = Task(
         task_uid=str(uuid4()),
         device_id=device_id,
         script_id=script_id,
         script_version=script_version,
         strategy_id=strategy_id,
-        params=params,
+        params=effective_params,
         timeout_seconds=timeout_seconds,
         source=source,
     )
@@ -78,7 +103,7 @@ async def dispatch_command(
             "script_id": str(script_id),
             "script_version": script_version,
             "script": script_payload,
-            "params": params or {},
+            "params": effective_params,
             "timeout_seconds": timeout_seconds,
         },
     }

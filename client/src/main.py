@@ -73,7 +73,9 @@ async def main():
     # ── Callback: USB device becomes ready ───────────────────────────
     async def on_usb_device_ready(usb_dev: USBDevice):
         device_uid = usb_dev.udid[:12]
-        if usb_dev.ssh_tunnel and usb_dev.ssh_tunnel.is_alive():
+        if usb_dev.usb_connected and usb_dev.local_port:
+            wda_url = f"http://localhost:{usb_dev.local_port}"
+        elif usb_dev.ssh_tunnel and usb_dev.ssh_tunnel.is_alive():
             wda_url = f"http://localhost:{usb_dev.ssh_tunnel.local_port}"
         elif usb_dev.local_port:
             wda_url = f"http://localhost:{usb_dev.local_port}"
@@ -167,6 +169,7 @@ async def main():
         await heartbeat.start()
 
         executor = CommandExecutor(device_map, ws_client.send_message)
+        executor.usb_monitor = usb_monitor
         ws_client.register_handler("command.dispatch", executor.handle_command_dispatch)
         ws_client.register_handler("command.cancel", executor.handle_command_cancel)
         logger.info("CommandExecutor ready for %d device(s)", len(device_map))

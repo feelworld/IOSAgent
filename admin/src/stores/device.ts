@@ -14,6 +14,7 @@ export interface DeviceItem {
   network_type: string | null
   wda_url: string
   companion_id: string
+  current_apple_id: string | null
   current_task_id: string | null
   last_heartbeat: string | null
   registered_at: string | null

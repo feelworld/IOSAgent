@@ -18,6 +18,7 @@ const PRESET_CONFIGS: Omit<ConfigItem, 'scope' | 'scope_id'>[] = [
   { key: 'script_timeout', value: 300, description: '脚本执行超时（秒）' },
   { key: 'max_retries', value: 3, description: '最大重试次数' },
   { key: 'command_expire_seconds', value: 3600, description: '指令过期时间（秒）' },
+  { key: 'max_accounts_per_device', value: 3, description: '单台设备分配账号上限' },
 ]
 
 const activeScope = ref<Scope>('global')

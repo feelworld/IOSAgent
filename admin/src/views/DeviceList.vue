@@ -178,6 +178,12 @@ onMounted(() => {
       </el-table-column>
       <el-table-column prop="model" label="型号" width="120" />
       <el-table-column prop="ios_version" label="iOS" width="80" />
+      <el-table-column label="当前账号" min-width="180">
+        <template #default="{ row }">
+          <span v-if="row.current_apple_id" style="font-size: 12px">{{ row.current_apple_id }}</span>
+          <el-tag v-else type="info" size="small">未分配</el-tag>
+        </template>
+      </el-table-column>
       <el-table-column label="电量" width="70">
         <template #default="{ row }">
           {{ row.battery_level != null ? `${row.battery_level}%` : '-' }}

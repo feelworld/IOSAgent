@@ -8,6 +8,7 @@ import {
   Monitor,
   TrendCharts,
   Setting,
+  User,
 } from '@element-plus/icons-vue'
 import { getMe, logout } from '../api/auth'
 
@@ -33,6 +34,7 @@ const menuItems = [
   { index: '/devices', title: '设备管理', icon: Iphone },
   { index: '/scripts', title: '脚本编辑', icon: Document },
   { index: '/tasks', title: '任务监控', icon: Monitor },
+  { index: '/accounts', title: '账号池', icon: User },
   { index: '/strategies', title: '策略管理', icon: TrendCharts },
   { index: '/config', title: '系统配置', icon: Setting },
 ]

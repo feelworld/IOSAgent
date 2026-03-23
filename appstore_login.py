@@ -1,35 +1,30 @@
 """
 App Store 智能登录脚本 (状态机模式)
-根据当前页面状态自动判断下一步操作，不会重启 App Store。
+根据 iOS 版本自动选择登录流程:
+  - iOS 14.x: 系统弹窗式登录 (Apple ID + 密码同屏, 点"登录")
+  - iOS 15+:  全屏登录页 (先输邮箱点继续, 再输密码点继续)
 
-可作为独立脚本运行，也可通过远程下发（PythonScriptRunner）执行。
+远程下发时, params 由系统自动注入:
+    - apple_id / apple_password: 账号密码
+    - ios_version: 设备 iOS 版本 (如 "14.2", "16.1")
 
-独立运行:
-    1. 修改下方 APPLE_ID 和 APPLE_PASSWORD
-    2. 确保 WDA 在 iPad 上运行，且端口转发已开启
-    3. 运行: python appstore_login.py
-
-远程下发时, params 应包含:
-    - apple_id: Apple ID 邮箱
-    - apple_password: Apple ID 密码
+error_code 约定:
+    - APPLE_ID_BANNED: 账号被封/禁用, 触发服务端自动切换
 """
 import asyncio
-import base64
 import logging
 
 logger = logging.getLogger("appstore_login")
 
-WDA_URL = "http://localhost:8100"
-APPLE_ID = "jwkhjbfer661@outlook.com"
-APPLE_PASSWORD = "Hlzhx1212"
+BANNED_KEYWORDS = [
+    "已被禁用", "has been disabled",
+    "已被锁定", "has been locked",
+    "无法登录", "cannot sign in",
+    "此 Apple ID 已被停用", "This Apple ID has been disabled",
+]
 
 
-async def save_screenshot(driver, filename):
-    screenshot_b64 = await driver.screenshot()
-    with open(filename, "wb") as f:
-        f.write(base64.b64decode(screenshot_b64))
-    logger.info("Screenshot: %s", filename)
-
+# ─── Helpers ──────────────────────────────────────────────────
 
 async def tap_coord(driver, x, y):
     actions = {
@@ -49,10 +44,20 @@ async def tap_coord(driver, x, y):
 
 async def has_element(driver, using, value):
     try:
-        elem = await driver.find_element(using, value)
-        return elem
+        return await driver.find_element(using, value)
     except Exception:
         return None
+
+
+async def find_elements(driver, using, value):
+    try:
+        data = await driver._request(
+            "POST", f"/session/{driver._session_id}/elements",
+            json={"using": using, "value": value},
+        )
+        return data.get("value", [])
+    except Exception:
+        return []
 
 
 async def tap_element(driver, elem):
@@ -68,161 +73,368 @@ async def type_into(driver, elem, text):
     await driver.type_text(eid, text)
 
 
-async def detect_state(driver):
-    """Detect current page state by checking for key elements."""
+async def clear_and_type(driver, elem, text):
+    """Clear field then type text."""
+    eid = elem.get("ELEMENT") or list(elem.values())[0]
+    await driver.tap_element(eid)
+    await asyncio.sleep(0.3)
+    try:
+        await driver._request(
+            "POST", f"/session/{driver._session_id}/element/{eid}/clear",
+        )
+    except Exception:
+        pass
+    await asyncio.sleep(0.2)
+    await driver.type_text(eid, text)
 
-    e = await has_element(driver, "name", "不升级")
-    if e:
-        return "security_popup", e
 
-    e = await has_element(driver, "name", "其他选项")
-    if e:
-        return "2fa_options", e
+async def check_banned(driver):
+    try:
+        source = await driver.get_page_source()
+        for kw in BANNED_KEYWORDS:
+            if kw in source:
+                return True
+    except Exception:
+        pass
+    return False
 
-    e = await has_element(driver, "class name", "XCUIElementTypeSecureTextField")
-    if e:
-        return "password_screen", e
 
-    e = await has_element(driver, "name", "username-field")
-    if e:
-        return "email_screen", e
+async def get_source_safe(driver):
+    try:
+        return await driver.get_page_source()
+    except Exception:
+        return ""
 
-    e = await has_element(driver, "name", "完成")
-    if e:
+
+def parse_major_version(version_str):
+    """'14.2' -> 14, '15.1.1' -> 15, '' -> 0"""
+    try:
+        return int(version_str.split(".")[0])
+    except (ValueError, IndexError):
+        return 0
+
+
+# ─── iOS 14.x Login Flow (Alert-style dialog) ─────────────────
+
+async def login_ios14(driver, apple_id, apple_password):
+    """iOS 14 App Store login: system alert with both fields on one screen."""
+    logger.info("[iOS14] Opening App Store...")
+    try:
+        await driver.create_session("com.apple.AppStore")
+    except Exception:
+        await driver.launch_app("com.apple.AppStore")
+    await asyncio.sleep(5)
+
+    for iteration in range(25):
+        logger.info("--- [iOS14] Iteration %d ---", iteration + 1)
+
+        if await check_banned(driver):
+            raise BannedAccountError(f"Apple ID {apple_id} is banned or disabled")
+
+        source = await get_source_safe(driver)
+
+        # Check if on account page (has "完成" button)
+        done_btn = await has_element(driver, "name", "完成")
+        if done_btn:
+            has_sign_in = False
+            for sign_name in ["AppStore.account.signIn", "登录", "Sign In", "登入"]:
+                if await has_element(driver, "name", sign_name):
+                    has_sign_in = True
+                    logger.info("[iOS14] Account page with sign-in option: '%s'", sign_name)
+                    e = await has_element(driver, "name", sign_name)
+                    if e:
+                        await tap_element(driver, e)
+                    await asyncio.sleep(4)
+                    break
+
+            if not has_sign_in:
+                for kw in ["登录", "Sign In", "sign_in", "signIn", "登入"]:
+                    if kw in source:
+                        has_sign_in = True
+                        logger.info("[iOS14] Found sign-in keyword '%s' in page source", kw)
+                        break
+
+            if not has_sign_in and "退出登录" not in source and "Sign Out" not in source:
+                logger.info("[iOS14] Account page but no sign-in or sign-out found, dumping buttons...")
+                buttons = await find_elements(driver, "class name", "XCUIElementTypeButton")
+                for btn in buttons[:15]:
+                    bid = btn.get("ELEMENT") or list(btn.values())[0]
+                    try:
+                        a = await driver._request(
+                            "GET", f"/session/{driver._session_id}/element/{bid}/attribute/label",
+                        )
+                        lbl = a.get("value", "")
+                        if lbl:
+                            logger.info("[iOS14] Button on account page: '%s'", lbl)
+                        if lbl in ("登录", "Sign In", "登入"):
+                            has_sign_in = True
+                            await driver.tap_element(bid)
+                            logger.info("[iOS14] Tapped sign-in button: '%s'", lbl)
+                            await asyncio.sleep(4)
+                            break
+                    except Exception:
+                        pass
+
+            if not has_sign_in:
+                if "退出登录" in source or "Sign Out" in source:
+                    logger.info("[iOS14] Confirmed logged in (found sign-out), tapping '完成'")
+                    await tap_element(driver, done_btn)
+                    return
+                else:
+                    logger.warning("[iOS14] Cannot determine login state, source[:400]=%s", source[:400])
+                    await asyncio.sleep(3)
+            continue
+
+        # Security upgrade popup
+        e = await has_element(driver, "name", "不升级")
+        if e:
+            logger.info("[iOS14] Tapping '不升级'")
+            await tap_element(driver, e)
+            await asyncio.sleep(3)
+            continue
+
+        # 2FA options
+        e = await has_element(driver, "name", "其他选项")
+        if e:
+            logger.info("[iOS14] Tapping '其他选项'")
+            await tap_element(driver, e)
+            await asyncio.sleep(3)
+            continue
+
+        # Login alert: both text fields visible at once
+        text_fields = await find_elements(driver, "class name", "XCUIElementTypeTextField")
+        secure_fields = await find_elements(driver, "class name", "XCUIElementTypeSecureTextField")
+
+        if secure_fields:
+            logger.info("[iOS14] Login dialog detected (text_fields=%d, secure_fields=%d)",
+                        len(text_fields), len(secure_fields))
+
+            # Type Apple ID into regular text field (if exists and empty/wrong)
+            if text_fields:
+                logger.info("[iOS14] Entering Apple ID: %s", apple_id)
+                await clear_and_type(driver, text_fields[0], apple_id)
+                await asyncio.sleep(0.5)
+
+            # Type password into secure text field
+            logger.info("[iOS14] Entering password")
+            await clear_and_type(driver, secure_fields[0], apple_password)
+            await asyncio.sleep(0.5)
+
+            # Tap "登录" / "Sign In" button
+            sign_btn = await has_element(driver, "name", "登录")
+            if not sign_btn:
+                sign_btn = await has_element(driver, "name", "Sign In")
+            if not sign_btn:
+                sign_btn = await has_element(driver, "name", "好")
+            if not sign_btn:
+                sign_btn = await has_element(driver, "name", "OK")
+            if sign_btn:
+                logger.info("[iOS14] Tapping login button")
+                await tap_element(driver, sign_btn)
+            else:
+                logger.warning("[iOS14] Login button not found, trying to find it...")
+                buttons = await find_elements(driver, "class name", "XCUIElementTypeButton")
+                for btn in buttons:
+                    bid = btn.get("ELEMENT") or list(btn.values())[0]
+                    try:
+                        a = await driver._request(
+                            "GET", f"/session/{driver._session_id}/element/{bid}/attribute/label",
+                        )
+                        lbl = a.get("value", "")
+                        logger.info("[iOS14] Button label: '%s'", lbl)
+                        if lbl in ("登录", "Sign In", "好", "OK"):
+                            await driver.tap_element(bid)
+                            logger.info("[iOS14] Tapped button: '%s'", lbl)
+                            break
+                    except Exception:
+                        pass
+
+            logger.info("[iOS14] Waiting for login response...")
+            await asyncio.sleep(10)
+            continue
+
+        # Account popup with "Sign in with Apple Account"
+        sign_in = await has_element(driver, "name", "AppStore.account.signIn")
+        if not sign_in:
+            sign_in = await has_element(driver, "name", "登录")
+        if sign_in:
+            logger.info("[iOS14] Tapping sign-in button")
+            await tap_element(driver, sign_in)
+            await asyncio.sleep(4)
+            continue
+
+        # Main page: tap profile icon
+        if "Today" in source or "今天" in source or "游戏" in source or "Games" in source:
+            size = await driver.get_window_size()
+            w = size.get("width", 375)
+            coords = [(w - 30, 52), (w - 30, 45), (w - 25, 88), (w - 30, 70)]
+            cx, cy = coords[iteration % len(coords)]
+            logger.info("[iOS14] Main page detected, tapping profile icon at (%d, %d)", cx, cy)
+            await tap_coord(driver, cx, cy)
+            await asyncio.sleep(3)
+            continue
+
+        # Unknown state
+        logger.warning("[iOS14] Unknown state, source[:300]=%s", source[:300])
+        await asyncio.sleep(4)
+
+    logger.info("[iOS14] Max iterations reached")
+
+
+# ─── iOS 15+ Login Flow (Full-screen pages) ───────────────────
+
+async def login_ios15(driver, apple_id, apple_password):
+    """iOS 15+ App Store login: full-screen Apple ID sign-in pages."""
+    logger.info("[iOS15+] Opening App Store...")
+    try:
+        await driver.create_session("com.apple.AppStore")
+    except Exception:
+        await driver.launch_app("com.apple.AppStore")
+    await asyncio.sleep(5)
+
+    for iteration in range(25):
+        logger.info("--- [iOS15+] Iteration %d ---", iteration + 1)
+
+        if await check_banned(driver):
+            raise BannedAccountError(f"Apple ID {apple_id} is banned or disabled")
+
+        source = await get_source_safe(driver)
+
+        # Already logged in
+        e = await has_element(driver, "name", "完成")
+        if e:
+            sign_in = await has_element(driver, "name", "AppStore.account.signIn")
+            if not sign_in:
+                logger.info("[iOS15+] Already logged in, tapping '完成'")
+                await tap_element(driver, e)
+                return
+
+        # Security popup
+        e = await has_element(driver, "name", "不升级")
+        if e:
+            logger.info("[iOS15+] Tapping '不升级'")
+            await tap_element(driver, e)
+            await asyncio.sleep(3)
+            continue
+
+        # 2FA options
+        e = await has_element(driver, "name", "其他选项")
+        if e:
+            logger.info("[iOS15+] Tapping '其他选项'")
+            await tap_element(driver, e)
+            await asyncio.sleep(3)
+            continue
+
+        # Password page (separate from email)
+        secure = await has_element(driver, "class name", "XCUIElementTypeSecureTextField")
+        if secure:
+            email_field = await has_element(driver, "name", "username-field")
+            if not email_field:
+                logger.info("[iOS15+] Password page, entering password")
+                await type_into(driver, secure, apple_password)
+                await asyncio.sleep(1)
+                cont = await has_element(driver, "name", "continue-button")
+                if cont:
+                    await tap_element(driver, cont)
+                logger.info("[iOS15+] Waiting for response...")
+                await asyncio.sleep(10)
+                continue
+
+        # Email page
+        email_field = await has_element(driver, "name", "username-field")
+        if email_field:
+            logger.info("[iOS15+] Email page, entering Apple ID: %s", apple_id)
+            await type_into(driver, email_field, apple_id)
+            await asyncio.sleep(1)
+            cont = await has_element(driver, "name", "continue-button")
+            if cont:
+                await tap_element(driver, cont)
+            await asyncio.sleep(5)
+            continue
+
+        # Account popup
         sign_in = await has_element(driver, "name", "AppStore.account.signIn")
         if sign_in:
-            return "account_popup", sign_in
-        return "logged_in", e
+            logger.info("[iOS15+] Tapping sign-in button")
+            await tap_element(driver, sign_in)
+            await asyncio.sleep(4)
+            continue
 
-    e = await has_element(driver, "name", "AppStore.account.signIn")
-    if e:
-        return "account_popup", e
+        # Main page
+        btn = await has_element(driver, "accessibility id", "AppStore.accountButton")
+        if not btn:
+            btn = await has_element(driver, "name", "Account")
+        if btn:
+            logger.info("[iOS15+] Tapping account button")
+            await tap_element(driver, btn)
+            await asyncio.sleep(3)
+            continue
 
-    e = await has_element(driver, "name", "AppStore.accountButton")
-    if e:
-        return "main_page", e
+        if "Today" in source or "今天" in source or "游戏" in source:
+            size = await driver.get_window_size()
+            w = size.get("width", 375)
+            logger.info("[iOS15+] Main page, tapping profile icon")
+            await tap_coord(driver, w - 30, 52)
+            await asyncio.sleep(3)
+            continue
 
-    e = await has_element(driver, "name", "continue-button")
-    if e:
-        return "loading", e
+        # Loading or continue button
+        e = await has_element(driver, "name", "continue-button")
+        if e:
+            logger.info("[iOS15+] Loading/continue...")
+            await asyncio.sleep(5)
+            continue
 
-    return "unknown", None
+        logger.warning("[iOS15+] Unknown state, source[:300]=%s", source[:300])
+        await asyncio.sleep(4)
 
+    logger.info("[iOS15+] Max iterations reached")
+
+
+# ─── Entry Point ──────────────────────────────────────────────
 
 async def run(driver, params):
-    """Entry point for remote execution via PythonScriptRunner.
+    """Entry point for remote execution via PythonScriptRunner."""
+    apple_id = params.get("apple_id", "")
+    apple_password = params.get("apple_password", "")
+    ios_version = params.get("ios_version", "")
 
-    Args:
-        driver: WDADriver instance (session already created by runner)
-        params: dict with optional keys 'apple_id' and 'apple_password'
-    """
-    apple_id = params.get("apple_id", APPLE_ID)
-    apple_password = params.get("apple_password", APPLE_PASSWORD)
+    if not apple_id or not apple_password:
+        raise RuntimeError("Missing apple_id or apple_password in params")
 
-    logger.info("Starting App Store login for %s", apple_id)
+    major = parse_major_version(ios_version)
+    logger.info("Device iOS version: %s (major=%d), Apple ID: %s", ios_version, major, apple_id)
 
-    source = await driver.get_page_source()
-    if "com.apple.AppStore" not in source and "AppStore" not in source:
-        logger.info("App Store not in foreground, launching...")
-        await driver.launch_app("com.apple.AppStore")
-        await asyncio.sleep(3)
+    if major <= 14:
+        await login_ios14(driver, apple_id, apple_password)
+    else:
+        await login_ios15(driver, apple_id, apple_password)
 
-    MAX_ITERATIONS = 15
-    for iteration in range(MAX_ITERATIONS):
-        logger.info("=" * 50)
-        logger.info("Iteration %d: Detecting state...", iteration + 1)
+    logger.info("Login flow completed for %s", apple_id)
 
-        state, elem = await detect_state(driver)
-        logger.info("Current state: %s", state)
 
-        if state == "main_page":
-            logger.info("Action: Tap account button")
-            await tap_element(driver, elem)
-            await asyncio.sleep(3)
-
-        elif state == "account_popup":
-            logger.info("Action: Tap 'Sign in with Apple Account'")
-            await tap_element(driver, elem)
-            await asyncio.sleep(4)
-
-        elif state == "email_screen":
-            logger.info("Action: Enter Apple ID and tap Continue")
-            await type_into(driver, elem, apple_id)
-            await asyncio.sleep(1)
-            cont = await has_element(driver, "name", "continue-button")
-            if cont:
-                await tap_element(driver, cont)
-            await asyncio.sleep(5)
-
-        elif state == "password_screen":
-            logger.info("Action: Enter password and tap Continue")
-            await type_into(driver, elem, apple_password)
-            await asyncio.sleep(1)
-            cont = await has_element(driver, "name", "continue-button")
-            if cont:
-                await tap_element(driver, cont)
-            logger.info("Waiting for server response...")
-            await asyncio.sleep(10)
-
-        elif state == "2fa_options":
-            logger.info("Action: Tap '其他选项'")
-            await tap_element(driver, elem)
-            await asyncio.sleep(5)
-
-        elif state == "security_popup":
-            logger.info("Action: Tap '不升级'")
-            await tap_element(driver, elem)
-            await asyncio.sleep(5)
-
-        elif state == "logged_in":
-            logger.info("Action: Already logged in! Tap '完成' to dismiss")
-            await tap_element(driver, elem)
-            await asyncio.sleep(2)
-            logger.info("Login successful!")
-            return
-
-        elif state == "loading":
-            logger.info("Page is loading, waiting...")
-            await asyncio.sleep(5)
-
-        elif state == "unknown":
-            logger.warning("Unknown state, waiting...")
-            source = await driver.get_page_source()
-            if "AppStore.account.signIn" not in source and "username-field" not in source:
-                logger.info("Might be logged in already!")
-                return
-            await asyncio.sleep(3)
-
-    logger.info("Reached max iterations, login flow finished")
+class BannedAccountError(Exception):
+    """Raised when the Apple ID is banned/disabled. error_code = APPLE_ID_BANNED"""
+    pass
 
 
 if __name__ == "__main__":
-    import os
-    import sys
+    import os, sys
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from client.src.wda_driver import WDADriver
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
     async def main():
-        driver = WDADriver(WDA_URL, "test-ipad")
+        driver = WDADriver("http://localhost:8100", "test")
         if not await driver.health_check():
-            logger.error("WDA not reachable! Check port forwarding.")
+            logger.error("WDA not reachable!")
             return
-
-        logger.info("Connecting to current screen...")
-        try:
-            data = await driver._request("POST", "/session", json={
-                "capabilities": {"alwaysMatch": {}}
-            })
-            driver._session_id = data.get("sessionId") or data.get("value", {}).get("sessionId")
-        except Exception:
-            driver._session_id = await driver.create_session("com.apple.AppStore")
-        logger.info("Session: %s", driver._session_id)
-
-        await run(driver, {"apple_id": APPLE_ID, "apple_password": APPLE_PASSWORD})
-
-        await save_screenshot(driver, "final_result.png")
-        logger.info("Done! Check final_result.png")
+        await driver.create_session("")
+        await run(driver, {
+            "apple_id": "test@example.com",
+            "apple_password": "test123",
+            "ios_version": "14.2",
+        })
 
     asyncio.run(main())

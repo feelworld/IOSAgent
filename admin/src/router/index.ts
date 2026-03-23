@@ -43,6 +43,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/StrategyManager.vue'),
       },
       {
+        path: 'accounts',
+        name: 'Accounts',
+        component: () => import('../views/AccountPool.vue'),
+      },
+      {
         path: 'config',
         name: 'Config',
         component: () => import('../views/ConfigPanel.vue'),
