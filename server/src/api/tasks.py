@@ -46,20 +46,41 @@ def _serialize_task(task: Task) -> dict:
 
 class DispatchRequest(BaseModel):
     device_ids: list[str]
-    script_id: str
-    script_version: int
+    action: str = "login"
+    app_name: Optional[str] = None
     params: Optional[dict] = None
     timeout_seconds: int = Field(default=300, ge=10, le=7200)
+    script_id: Optional[str] = None
+    script_version: Optional[int] = None
 
 
 @router.post("/dispatch")
 async def dispatch_tasks(body: DispatchRequest, _user=Depends(get_current_user)):
+    from server.src.models.script import Script, ScriptStatus
+
+    if body.script_id:
+        script_id = PydanticObjectId(body.script_id)
+        script_version = body.script_version or 1
+    else:
+        default_script = await Script.find_one(Script.status == ScriptStatus.PUBLISHED)
+        if not default_script:
+            default_script = await Script.find_one()
+        if not default_script:
+            return _err(40401, "No script available")
+        script_id = default_script.id
+        script_version = default_script.current_version
+
+    merged_params = dict(body.params or {})
+    merged_params["action"] = body.action
+    if body.app_name:
+        merged_params["app_name"] = body.app_name
+
     oid_device_ids = [PydanticObjectId(d) for d in body.device_ids]
     tasks = await task_scheduler.batch_dispatch(
         device_ids=oid_device_ids,
-        script_id=PydanticObjectId(body.script_id),
-        script_version=body.script_version,
-        params=body.params,
+        script_id=script_id,
+        script_version=script_version,
+        params=merged_params,
         timeout_seconds=body.timeout_seconds,
         source=TaskSource.MANUAL,
     )

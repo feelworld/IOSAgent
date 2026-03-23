@@ -77,10 +77,12 @@ export const useTaskStore = defineStore('task', () => {
 
   async function dispatchTask(payload: {
     device_ids: string[]
-    script_id: string
-    script_version: number
+    action?: string
+    app_name?: string
+    script_id?: string
+    script_version?: number
     params?: Record<string, any>
-    timeout?: number
+    timeout_seconds?: number
   }) {
     const { data } = await client.post('/tasks/dispatch', payload)
     return data

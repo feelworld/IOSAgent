@@ -194,9 +194,10 @@ class CommandExecutor:
                         return
                     logger.info("Starting script execution for %s", duid)
                     await self._send_status(tid, tuid, duid, "running", 0, 0, 1)
+                    run_params = {**t["params"], "device_uid": duid}
                     py_runner = PythonScriptRunner(driver)
                     result = await py_runner.execute(
-                        t["script"].get("python_code", ""), t["params"], t["timeout"],
+                        t["script"].get("python_code", ""), run_params, t["timeout"],
                     )
                     await self._report_result(tid, tuid, duid, result)
                 except asyncio.CancelledError:

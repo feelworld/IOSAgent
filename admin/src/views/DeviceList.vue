@@ -1,13 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useDeviceStore, type DeviceItem } from '../stores/device'
 import { useTaskStore } from '../stores/task'
-import { useScriptStore, type ScriptItem } from '../stores/script'
 
 const store = useDeviceStore()
 const taskStore = useTaskStore()
-const scriptStore = useScriptStore()
 const filterStatus = ref('')
 const currentPage = ref(1)
 const pageSize = ref(20)
@@ -15,63 +13,48 @@ const selectedDevices = ref<DeviceItem[]>([])
 
 const dispatchVisible = ref(false)
 const dispatchForm = ref({
-  script_id: '',
-  script_version: 1,
-  params_json: '',
+  action: 'login',
+  app_name: '',
   timeout: 300,
 })
 const dispatching = ref(false)
-const scriptList = ref<ScriptItem[]>([])
-const selectedScriptName = ref('')
+
+const actionOptions = [
+  { label: '登录 Apple ID', value: 'login' },
+  { label: '搜索下载 App', value: 'search_download' },
+  { label: '登录 + 下载 (完整流程)', value: 'full_flow' },
+]
 
 function handleSelectionChange(rows: DeviceItem[]) {
   selectedDevices.value = rows
 }
 
-async function openDispatchDialog() {
-  dispatchForm.value = { script_id: '', script_version: 1, params_json: '', timeout: 300 }
-  selectedScriptName.value = ''
+function openDispatchDialog() {
+  dispatchForm.value = { action: 'login', app_name: '', timeout: 300 }
   dispatchVisible.value = true
-  await scriptStore.fetchScripts({ size: 100 })
-  scriptList.value = scriptStore.scripts
 }
 
-function handleScriptSelect(scriptId: string) {
-  const script = scriptList.value.find(s => s.id === scriptId)
-  if (script) {
-    dispatchForm.value.script_version = script.current_version
-    selectedScriptName.value = script.name
-  }
-}
+const needsAppName = computed(() =>
+  ['search_download', 'full_flow'].includes(dispatchForm.value.action)
+)
 
 async function handleDispatch() {
   if (!selectedDevices.value.length) {
     ElMessage.warning('请先选择设备')
     return
   }
-  if (!dispatchForm.value.script_id) {
-    ElMessage.warning('请选择脚本')
+  if (needsAppName.value && !dispatchForm.value.app_name.trim()) {
+    ElMessage.warning('请输入 App 名称')
     return
-  }
-
-  let params: Record<string, any> | undefined
-  if (dispatchForm.value.params_json.trim()) {
-    try {
-      params = JSON.parse(dispatchForm.value.params_json)
-    } catch {
-      ElMessage.error('参数 JSON 格式不正确')
-      return
-    }
   }
 
   dispatching.value = true
   try {
     const res = await taskStore.dispatchTask({
       device_ids: selectedDevices.value.map(d => d.id),
-      script_id: dispatchForm.value.script_id,
-      script_version: dispatchForm.value.script_version,
-      params,
-      timeout: dispatchForm.value.timeout,
+      action: dispatchForm.value.action,
+      app_name: dispatchForm.value.app_name || undefined,
+      timeout_seconds: dispatchForm.value.timeout,
     })
     if (res.code === 0) {
       ElMessage.success(`已下发 ${selectedDevices.value.length} 台设备`)
@@ -163,7 +146,7 @@ onMounted(() => {
           <el-option v-for="opt in statusOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
         </el-select>
         <el-button type="primary" @click="openDispatchDialog" :disabled="!selectedDevices.length">
-          下发脚本
+          下发任务
         </el-button>
       </el-space>
     </el-card>
@@ -221,47 +204,20 @@ onMounted(() => {
       />
     </div>
 
-    <el-dialog v-model="dispatchVisible" title="下发脚本" width="520px" destroy-on-close>
+    <el-dialog v-model="dispatchVisible" title="下发任务" width="520px" destroy-on-close>
       <el-form label-width="100px">
         <el-form-item label="已选设备">
           <el-tag v-for="d in selectedDevices" :key="d.id" size="small" style="margin-right: 6px">
-            {{ d.device_uid.slice(0, 8) }}…
+            {{ d.name || d.device_uid.slice(0, 8) }}
           </el-tag>
-          <span v-if="!selectedDevices.length" style="color: var(--el-text-color-placeholder)">请在表格中勾选设备</span>
         </el-form-item>
-        <el-form-item label="选择脚本">
-          <el-select
-            v-model="dispatchForm.script_id"
-            placeholder="请选择脚本"
-            filterable
-            style="width: 100%"
-            @change="handleScriptSelect"
-          >
-            <el-option
-              v-for="s in scriptList"
-              :key="s.id"
-              :label="`${s.name} (v${s.current_version}) ${s.script_type === 'python' ? '[Py]' : ''}`"
-              :value="s.id"
-            >
-              <span>{{ s.name }}</span>
-              <el-tag :type="s.script_type === 'python' ? 'warning' : 'primary'" size="small" style="margin-left: 8px">
-                {{ s.script_type === 'python' ? 'Python' : '步骤' }}
-              </el-tag>
-              <span style="float: right; color: var(--el-text-color-secondary); font-size: 12px">v{{ s.current_version }}</span>
-            </el-option>
+        <el-form-item label="任务类型">
+          <el-select v-model="dispatchForm.action" style="width: 100%">
+            <el-option v-for="opt in actionOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
           </el-select>
         </el-form-item>
-        <el-form-item label="脚本版本">
-          <el-input-number v-model="dispatchForm.script_version" :min="1" />
-          <span style="margin-left: 8px; color: var(--el-text-color-secondary); font-size: 12px">默认使用最新版本</span>
-        </el-form-item>
-        <el-form-item label="参数 (JSON)">
-          <el-input
-            v-model="dispatchForm.params_json"
-            type="textarea"
-            :rows="4"
-            placeholder='{"keyword": "example"}'
-          />
+        <el-form-item v-if="needsAppName" label="App 名称">
+          <el-input v-model="dispatchForm.app_name" placeholder="例如: 微信" />
         </el-form-item>
         <el-form-item label="超时 (秒)">
           <el-input-number v-model="dispatchForm.timeout" :min="30" :max="3600" :step="30" />

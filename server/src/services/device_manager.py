@@ -113,16 +113,23 @@ async def update_heartbeat(
     """Update device heartbeat and status.
 
     Preserves BUSY status — only the task completion flow should clear it.
+    Auto-recovers ERROR devices when heartbeat reports online.
     """
     device = await Device.find_one(Device.device_uid == device_uid)
     if not device:
         logger.warning(f"Heartbeat for unknown device: {device_uid}")
         return None
-    if device.status != DeviceStatus.BUSY:
+
+    if device.status == DeviceStatus.ERROR and status == "online":
+        device.status = DeviceStatus.ONLINE
+        device.current_task_id = None
+        logger.info("Device %s auto-recovered: ERROR -> ONLINE", device_uid)
+    elif device.status != DeviceStatus.BUSY:
         try:
             device.status = DeviceStatus(status)
         except ValueError:
             pass
+
     device.last_heartbeat = datetime.now(timezone.utc)
     if battery_level is not None:
         device.battery_level = battery_level

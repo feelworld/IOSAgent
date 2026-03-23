@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import signal
+import sys
 import uuid
 from datetime import datetime, timezone
 
@@ -12,6 +13,10 @@ from client.src.device_info import collect_device_info, get_battery_level
 from client.src.heartbeat import HeartbeatSender
 from client.src.usb_monitor import USBMonitor, USBDevice, WDA_PORT_ON_DEVICE
 from client.src.ws_client import AgentWSClient
+
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 logging.basicConfig(
     level=logging.INFO,
