@@ -284,7 +284,7 @@ class USBMonitor:
             if success:
                 dev.wda_installed = True
                 logger.info("   WDA installed successfully!")
-                await self._respring_device(udid, dev)
+                await self._light_respring(udid, dev)
             else:
                 logger.error("   WDA installation failed. Device may not be jailbroken or SSH not available.")
                 logger.error("   Manual fix: open Sileo/Cydia on device → install AppSync Unified + OpenSSH → replug USB")
@@ -304,6 +304,9 @@ class USBMonitor:
         if wifi_ip:
             dev.wifi_ip = wifi_ip
 
+        # Step 5.5: Re-mount DDI (may have been lost after respring/ldrestart)
+        await self._mount_developer_image(udid)
+
         # Step 6: Always launch WDA via XCUITest to establish DTX session
         # (even if WDA appears running — it needs an active DTX session to stay alive)
         logger.info("   Launching WDA via XCUITest...")
@@ -321,6 +324,7 @@ class USBMonitor:
                 logger.warning("   Security error — AppSync hook may not be active. "
                                "Running uicache + ldrestart to reload hooks...")
                 await self._respring_device(udid, dev)
+                await self._mount_developer_image(udid)
                 await self._ensure_testmanagerd_running(dev)
 
             logger.warning("   XCUITest launch failed, retrying after delay...")
@@ -507,7 +511,7 @@ class USBMonitor:
             if proc.returncode == 0:
                 return True
             err = stderr.decode(errors="replace") + stdout.decode(errors="replace")
-            logger.error("   Install stderr: %s", err[:500])
+            logger.error("   Install output: %s", err[:2000])
             return False
         except asyncio.TimeoutError:
             logger.error("   WDA install timed out (>120s)")
@@ -1106,8 +1110,28 @@ class USBMonitor:
         except Exception as e:
             logger.debug("   Could not kill %s: %s", name, e)
 
+    async def _light_respring(self, udid: str, dev: "USBDevice | None" = None):
+        """Light respring: uicache + kill backboardd. Does NOT disrupt DDI mount."""
+        if dev is None:
+            dev = self._known.get(udid) or next(
+                (d for d in self._known.values() if d.udid == udid), None
+            )
+        ssh = self._try_ssh_connect(dev) if dev else None
+        if ssh:
+            try:
+                logger.info("   Running uicache to refresh app registration...")
+                ssh.exec_command("uicache -a 2>/dev/null", timeout=30)
+                await asyncio.sleep(3)
+            except Exception as e:
+                logger.warning("   SSH uicache failed: %s", e)
+            finally:
+                ssh.close()
+        await self._kill_process(udid, "backboardd")
+        logger.info("   Waiting for respring (15s)...")
+        await asyncio.sleep(15)
+
     async def _respring_device(self, udid: str, dev: "USBDevice | None" = None):
-        """Full respring: uicache + ldrestart to reload all tweak hooks (AppSync etc)."""
+        """Full hook reload: uicache + ldrestart. WARNING: destroys DDI mount."""
         if dev is None:
             dev = self._known.get(udid) or next(
                 (d for d in self._known.values() if d.udid == udid), None
@@ -1133,21 +1157,45 @@ class USBMonitor:
         await asyncio.sleep(35)
 
     async def _mount_developer_image(self, udid: str):
-        """Mount DeveloperDiskImage if not already mounted."""
+        """Mount DeveloperDiskImage, handling stale mounts from ldrestart."""
+        for attempt in range(2):
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    sys.executable, "-m", "pymobiledevice3",
+                    "mounter", "auto-mount", "--udid", udid,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                _, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+                output = stderr.decode(errors="replace")
+                if proc.returncode == 0:
+                    logger.info("   DeveloperDiskImage mounted")
+                    return
+                if "ImageMountFailed" in output and attempt == 0:
+                    logger.warning("   DDI mount failed (stale mount?), trying umount first...")
+                    await self._umount_developer_image(udid)
+                    await asyncio.sleep(2)
+                    continue
+                logger.warning("   DDI mount failed: %s", output[:300])
+            except asyncio.TimeoutError:
+                logger.warning("   DDI mount timed out")
+            except Exception as e:
+                logger.warning("   DDI mount error: %s", e)
+            break
+
+    async def _umount_developer_image(self, udid: str):
+        """Try to unmount a stale DeveloperDiskImage."""
         try:
             proc = await asyncio.create_subprocess_exec(
                 sys.executable, "-m", "pymobiledevice3",
-                "mounter", "auto-mount", "--udid", udid,
+                "mounter", "umount-developer", "--udid", udid,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
-            if b"mounted successfully" in stderr or b"already mounted" in stderr.lower():
-                logger.debug("   DeveloperDiskImage mounted")
-            elif proc.returncode == 0:
-                logger.debug("   DeveloperDiskImage mount returned 0")
+            await asyncio.wait_for(proc.communicate(), timeout=15)
+            logger.info("   DDI umount requested")
         except Exception as e:
-            logger.debug("   DeveloperDiskImage mount skipped: %s", e)
+            logger.debug("   DDI umount error: %s", e)
 
     # ── Port forwarding ──────────────────────────────────────────────
 
