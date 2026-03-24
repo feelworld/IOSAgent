@@ -327,10 +327,19 @@ class USBMonitor:
         elif dev.wda_running:
             logger.info("   XCUITest launch failed but WDA is responding (may die soon)")
         else:
+            last_err = getattr(dev, "_last_xcuitest_error", "")
+            is_security_err = "Security" in last_err or "code signature" in last_err
+
+            if is_security_err:
+                logger.warning("   Security error — AppSync hook may not be active. "
+                               "Running uicache + ldrestart to reload hooks...")
+                await self._respring_device(udid)
+                await self._ensure_testmanagerd_running(dev)
+
             logger.warning("   XCUITest launch failed, retrying after delay...")
-            for retry in range(2):
+            for retry in range(3):
                 await asyncio.sleep(10)
-                logger.info("   XCUITest retry %d/2...", retry + 1)
+                logger.info("   XCUITest retry %d/3...", retry + 1)
                 launched = await self._launch_wda_xcuitest(dev)
                 if launched:
                     dev.wda_running = True
@@ -658,6 +667,7 @@ class USBMonitor:
 
         except Exception as e:
             logger.warning("   XCUITest launch error: %s", e)
+            dev._last_xcuitest_error = str(e)
             return False
 
     async def _freeze_testmanagerd(self, dev: USBDevice):
