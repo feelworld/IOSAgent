@@ -170,48 +170,13 @@ class USBMonitor:
                 logger.info("USB reconnected for %s", dev.name or udid[:12])
                 dev.usb_connected = True
 
-        # Check removed USB devices — keep alive via SSH tunnel if possible
+        # Check removed USB devices — clean up immediately
         removed = [u for u in self._known if u not in current_udids and self._known[u].usb_connected]
         for udid in removed:
-            dev = self._known[udid]
-            wda_alive = False
-
-            # SSH tunnel present: retry multiple times (keeper may be restarting WDA)
-            if dev.ssh_tunnel and dev.ssh_tunnel.is_alive():
-                tunnel_url = f"http://localhost:{dev.ssh_tunnel.local_port}"
-                for attempt in range(6):
-                    wda_alive = await self._check_wda(tunnel_url)
-                    if wda_alive:
-                        break
-                    if attempt < 5:
-                        logger.info("USB gone, waiting for WDA via SSH tunnel... (%d/6) %s",
-                                    attempt + 1, dev.name or udid[:12])
-                        await asyncio.sleep(10)
-            elif dev.wifi_ip:
-                if await self._setup_ssh_tunnel(dev):
-                    tunnel_url = f"http://localhost:{dev.ssh_tunnel.local_port}"
-                    for attempt in range(6):
-                        wda_alive = await self._check_wda(tunnel_url)
-                        if wda_alive:
-                            break
-                        if attempt < 5:
-                            logger.info("USB gone, waiting for WDA via new SSH tunnel... (%d/6)", attempt + 1)
-                            await asyncio.sleep(10)
-
-            if wda_alive:
-                if dev.forward_proc:
-                    self._stop_forward(dev)
-                dev.usb_connected = False
-                dev.wda_running = True
-                logger.info("USB gone but WDA alive via SSH tunnel: %s", dev.name or udid[:12])
-                if self.on_device_ready:
-                    await self.on_device_ready(dev)
-                continue
-
             dev = self._known.pop(udid)
             self._stop_forward(dev)
             self._stop_ssh_tunnel(dev)
-            logger.info("Device removed: %s (%s)", dev.name or udid[:12], udid[:12])
+            logger.info("Device unplugged: %s (%s)", dev.name or udid[:12], udid[:12])
             if self.on_device_removed:
                 await self.on_device_removed(dev)
 
