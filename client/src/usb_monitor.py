@@ -1110,11 +1110,29 @@ class USBMonitor:
             logger.debug("   Could not kill %s: %s", name, e)
 
     async def _respring_device(self, udid: str):
-        """Respring device by killing backboardd — forces Substitute to reinject all hooks."""
-        logger.info("   Killing backboardd (respring)...")
-        await self._kill_process(udid, "backboardd")
-        logger.info("   Waiting for device to respring (30s)...")
-        await asyncio.sleep(30)
+        """Full respring: uicache + ldrestart to reload all tweak hooks (AppSync etc)."""
+        dev = self._known.get(udid) or next(
+            (d for d in self._known.values() if d.udid == udid), None
+        )
+        ssh = self._try_ssh_connect(dev) if dev else None
+        if ssh:
+            try:
+                logger.info("   Running uicache to refresh app registration...")
+                ssh.exec_command("uicache -a 2>/dev/null", timeout=30)
+                await asyncio.sleep(5)
+                logger.info("   Running ldrestart to reload all daemon hooks...")
+                ssh.exec_command("ldrestart 2>/dev/null &", timeout=5)
+            except Exception as e:
+                logger.warning("   SSH respring commands failed: %s, falling back to backboardd kill", e)
+                ssh.close()
+                await self._kill_process(udid, "backboardd")
+            else:
+                ssh.close()
+        else:
+            logger.info("   No SSH, killing backboardd for respring...")
+            await self._kill_process(udid, "backboardd")
+        logger.info("   Waiting for device to respring (35s)...")
+        await asyncio.sleep(35)
 
     async def _mount_developer_image(self, udid: str):
         """Mount DeveloperDiskImage if not already mounted."""
