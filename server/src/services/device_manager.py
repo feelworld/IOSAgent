@@ -143,7 +143,7 @@ async def check_offline_devices(timeout_seconds: int = 90) -> list[str]:
     """Background task: mark devices offline if heartbeat timeout exceeded."""
     threshold = datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)
     stale_devices = await Device.find(
-        In(Device.status, [DeviceStatus.ONLINE, DeviceStatus.BUSY]),
+        In(Device.status, [DeviceStatus.ONLINE, DeviceStatus.BUSY, DeviceStatus.ERROR]),
         Device.last_heartbeat < threshold,
     ).to_list()
 

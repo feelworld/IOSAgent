@@ -106,3 +106,9 @@ class HeartbeatSender:
         logger.info("Heartbeat now tracking %d device(s)", len(self.devices))
         if udid:
             self._udid_map[device.device_uid] = udid
+
+    def remove_device(self, device_uid: str):
+        self.devices = [d for d in self.devices if d.device_uid != device_uid]
+        self._udid_map.pop(device_uid, None)
+        logger.info("Device %s removed from heartbeat, tracking %d device(s)",
+                     device_uid, len(self.devices))

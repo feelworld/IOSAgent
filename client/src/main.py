@@ -139,7 +139,9 @@ async def main():
             if executor:
                 executor.update_device_url(device_uid, wifi_url)
         else:
-            logger.warning("USB removed for %s with no WiFi IP — device will go offline", device_uid)
+            logger.warning("USB removed for %s with no WiFi/tunnel — removing from heartbeat", device_uid)
+            if heartbeat:
+                heartbeat.remove_device(device_uid)
 
     usb_monitor = USBMonitor(
         wda_ipa_path=config.usb_monitor.wda_ipa_path,
