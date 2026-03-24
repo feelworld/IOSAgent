@@ -292,7 +292,7 @@ class USBMonitor:
                 dev.wda_installed = True
                 logger.info("   WDA installed successfully!")
                 # Respring to activate FrontBoard hook (needed for WDA launch)
-                await self._respring_device(udid)
+                await self._respring_device(udid, dev)
             else:
                 logger.error("   WDA installation failed. Device may not be jailbroken or SSH not available.")
                 self._failed.add(udid)
@@ -333,7 +333,7 @@ class USBMonitor:
             if is_security_err:
                 logger.warning("   Security error — AppSync hook may not be active. "
                                "Running uicache + ldrestart to reload hooks...")
-                await self._respring_device(udid)
+                await self._respring_device(udid, dev)
                 await self._ensure_testmanagerd_running(dev)
 
             logger.warning("   XCUITest launch failed, retrying after delay...")
@@ -1119,11 +1119,12 @@ class USBMonitor:
         except Exception as e:
             logger.debug("   Could not kill %s: %s", name, e)
 
-    async def _respring_device(self, udid: str):
+    async def _respring_device(self, udid: str, dev: "USBDevice | None" = None):
         """Full respring: uicache + ldrestart to reload all tweak hooks (AppSync etc)."""
-        dev = self._known.get(udid) or next(
-            (d for d in self._known.values() if d.udid == udid), None
-        )
+        if dev is None:
+            dev = self._known.get(udid) or next(
+                (d for d in self._known.values() if d.udid == udid), None
+            )
         ssh = self._try_ssh_connect(dev) if dev else None
         if ssh:
             try:
