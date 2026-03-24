@@ -259,6 +259,12 @@ class USBMonitor:
         # Step 2: Mount DeveloperDiskImage (needed early for DVT pkill)
         await self._mount_developer_image(udid)
 
+        # Step 2.5: Setup SSH early (needed for AppSync install / respring before WDA)
+        await self._enable_wifi_sync(udid)
+        wifi_ip_from_ssh = await self._setup_wifi_ssh(udid)
+        if wifi_ip_from_ssh:
+            dev.wifi_ip = wifi_ip_from_ssh
+
         # Step 3: Check if WDA is installed
         dev.wda_installed = await self._is_wda_installed(udid)
 
@@ -278,38 +284,47 @@ class USBMonitor:
                 appsync_ok = await self._ensure_appsync(udid)
 
                 if not appsync_ok:
-                    # AFC2 not available — try SSH to install AFC2 + AppSync automatically
                     logger.info("   AFC2 unavailable. Trying SSH auto-install...")
                     ssh_ok = await self._setup_device_via_ssh(udid)
                     if ssh_ok:
                         appsync_ok = True
 
                 if appsync_ok:
-                    logger.info("   AppSync deployed. Retrying WDA installation...")
-                    success = await self._install_wda(udid)
-
-                    if not success:
-                        logger.info("   Still failing — respring to reload AppSync hooks...")
+                    # AppSync deployed/present — do a full ldrestart via SSH to ensure hooks load
+                    logger.info("   Running ldrestart via SSH to activate AppSync hooks...")
+                    ssh = self._try_ssh_connect(dev)
+                    if ssh:
+                        try:
+                            ssh.exec_command("uicache -a 2>/dev/null", timeout=30)
+                            await asyncio.sleep(3)
+                            ssh.exec_command("ldrestart 2>/dev/null &", timeout=5)
+                            ssh.close()
+                            logger.info("   Waiting for ldrestart to complete (40s)...")
+                            await asyncio.sleep(40)
+                        except Exception as e:
+                            logger.warning("   SSH ldrestart failed: %s", e)
+                            try:
+                                ssh.close()
+                            except Exception:
+                                pass
+                            await self._respring_device(udid, dev)
+                    else:
+                        logger.info("   No SSH — falling back to backboardd respring...")
                         await self._respring_device(udid, dev)
-                        await asyncio.sleep(5)
-                        logger.info("   Retrying WDA installation after respring...")
-                        success = await self._install_wda(udid)
+
+                    await asyncio.sleep(5)
+                    logger.info("   Retrying WDA installation after hook reload...")
+                    success = await self._install_wda(udid)
 
             if success:
                 dev.wda_installed = True
                 logger.info("   WDA installed successfully!")
-                # Respring to activate FrontBoard hook (needed for WDA launch)
                 await self._respring_device(udid, dev)
             else:
                 logger.error("   WDA installation failed. Device may not be jailbroken or SSH not available.")
+                logger.error("   Manual fix: open Sileo/Cydia on device → install AppSync Unified + OpenSSH → replug USB")
                 self._failed.add(udid)
                 return
-
-        # Step 3.5: Enable WiFi sync so keeper can maintain WDA over WiFi
-        await self._enable_wifi_sync(udid)
-
-        # Step 3.6: Install OpenSSH + get WiFi IP (for SSH tunnel after USB removal)
-        wifi_ip_from_ssh = await self._setup_wifi_ssh(udid)
 
         # Step 4: Forward WDA port and check if WDA is already running
         dev.local_port = self._allocate_port()
