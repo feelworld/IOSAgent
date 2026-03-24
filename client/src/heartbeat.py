@@ -135,3 +135,28 @@ class HeartbeatSender:
         self._error_counts.pop(device_uid, None)
         logger.info("Device %s removed from heartbeat, tracking %d device(s)",
                      device_uid, len(self.devices))
+        asyncio.ensure_future(self._send_offline_notice(device_uid))
+
+    async def _send_offline_notice(self, device_uid: str):
+        """Immediately tell the server this device is offline."""
+        try:
+            message = {
+                "type": "heartbeat",
+                "id": str(uuid.uuid4()),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "payload": {
+                    "machine_id": self.machine_id,
+                    "devices": [{
+                        "device_uid": device_uid,
+                        "status": "offline",
+                        "battery_level": None,
+                        "network_type": None,
+                        "appstore_logged_in": None,
+                        "current_task_id": None,
+                    }],
+                },
+            }
+            await self.send_fn(message)
+            logger.info("Sent offline notice for %s", device_uid)
+        except Exception as e:
+            logger.warning("Failed to send offline notice for %s: %s", device_uid, e)
