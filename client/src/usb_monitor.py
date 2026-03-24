@@ -327,14 +327,24 @@ class USBMonitor:
         elif dev.wda_running:
             logger.info("   XCUITest launch failed but WDA is responding (may die soon)")
         else:
-            logger.warning("   XCUITest launch failed, waiting for WDA...")
-            for attempt in range(8):
-                await asyncio.sleep(WDA_STARTUP_WAIT)
-                check_url = self._get_wda_url(dev) or wda_url
-                dev.wda_running = await self._check_wda(check_url)
-                if dev.wda_running:
+            logger.warning("   XCUITest launch failed, retrying after delay...")
+            for retry in range(2):
+                await asyncio.sleep(10)
+                logger.info("   XCUITest retry %d/2...", retry + 1)
+                launched = await self._launch_wda_xcuitest(dev)
+                if launched:
+                    dev.wda_running = True
+                    logger.info("   WDA launched on retry %d!", retry + 1)
                     break
-                logger.info("   Waiting for WDA... (attempt %d/8)", attempt + 1)
+            if not dev.wda_running:
+                logger.warning("   All XCUITest retries failed, waiting for WDA...")
+                for attempt in range(8):
+                    await asyncio.sleep(WDA_STARTUP_WAIT)
+                    check_url = self._get_wda_url(dev) or wda_url
+                    dev.wda_running = await self._check_wda(check_url)
+                    if dev.wda_running:
+                        break
+                    logger.info("   Waiting for WDA... (attempt %d/8)", attempt + 1)
 
         # Step 7: Setup SSH tunnel (now that WDA is running)
         if dev.wda_running and dev.wifi_ip:
@@ -683,7 +693,7 @@ class USBMonitor:
                     "launchctl load /System/Library/LaunchDaemons/com.apple.testmanagerd.plist 2>/dev/null",
                     timeout=5,
                 )
-                await asyncio.sleep(3)
+                await asyncio.sleep(8)
         except Exception as e:
             logger.debug("   testmanagerd check: %s", e)
         finally:
@@ -1103,8 +1113,8 @@ class USBMonitor:
         """Respring device by killing backboardd — forces Substitute to reinject all hooks."""
         logger.info("   Killing backboardd (respring)...")
         await self._kill_process(udid, "backboardd")
-        logger.info("   Waiting for device to respring (15s)...")
-        await asyncio.sleep(15)
+        logger.info("   Waiting for device to respring (30s)...")
+        await asyncio.sleep(30)
 
     async def _mount_developer_image(self, udid: str):
         """Mount DeveloperDiskImage if not already mounted."""
