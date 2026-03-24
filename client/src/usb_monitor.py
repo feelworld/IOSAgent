@@ -288,6 +288,13 @@ class USBMonitor:
                     logger.info("   AppSync deployed. Retrying WDA installation...")
                     success = await self._install_wda(udid)
 
+                    if not success:
+                        logger.info("   Still failing — respring to reload AppSync hooks...")
+                        await self._respring_device(udid, dev)
+                        await asyncio.sleep(5)
+                        logger.info("   Retrying WDA installation after respring...")
+                        success = await self._install_wda(udid)
+
             if success:
                 dev.wda_installed = True
                 logger.info("   WDA installed successfully!")
