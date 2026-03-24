@@ -11,6 +11,8 @@ logger = logging.getLogger(__name__)
 
 
 class HeartbeatSender:
+    MAX_CONSECUTIVE_ERRORS = 3
+
     def __init__(
         self,
         machine_id: str,
@@ -25,6 +27,7 @@ class HeartbeatSender:
         self._task: Optional[asyncio.Task] = None
         self._running = False
         self._udid_map: dict[str, str] = {}  # device_uid -> full udid
+        self._error_counts: dict[str, int] = {}  # device_uid -> consecutive error count
 
     async def start(self):
         self._running = True
@@ -51,23 +54,42 @@ class HeartbeatSender:
 
     async def _send_heartbeat(self):
         device_statuses = []
-        for dev in self.devices:
+        to_remove = []
+
+        for dev in list(self.devices):
             is_healthy = await check_wda_health(dev.wda_url)
-            udid = self._udid_map.get(dev.device_uid, "")
+            uid = dev.device_uid
+            udid = self._udid_map.get(uid, "")
             battery = None
+
             if is_healthy:
+                self._error_counts[uid] = 0
                 usb_available = await self._is_usb_connected(udid) if udid else False
                 battery = await get_battery_level(
                     dev.wda_url, udid if usb_available else ""
                 )
+            else:
+                self._error_counts[uid] = self._error_counts.get(uid, 0) + 1
+                if self._error_counts[uid] >= self.MAX_CONSECUTIVE_ERRORS:
+                    logger.warning("Device %s failed %d consecutive heartbeats — auto-removing",
+                                   uid, self._error_counts[uid])
+                    to_remove.append(uid)
+                    continue
+
             device_statuses.append({
-                "device_uid": dev.device_uid,
+                "device_uid": uid,
                 "status": "online" if is_healthy else "error",
                 "battery_level": battery,
                 "network_type": None,
                 "appstore_logged_in": None,
                 "current_task_id": None,
             })
+
+        for uid in to_remove:
+            self.remove_device(uid)
+
+        if not device_statuses:
+            return
 
         message = {
             "type": "heartbeat",
@@ -110,5 +132,6 @@ class HeartbeatSender:
     def remove_device(self, device_uid: str):
         self.devices = [d for d in self.devices if d.device_uid != device_uid]
         self._udid_map.pop(device_uid, None)
+        self._error_counts.pop(device_uid, None)
         logger.info("Device %s removed from heartbeat, tracking %d device(s)",
                      device_uid, len(self.devices))

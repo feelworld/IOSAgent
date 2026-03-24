@@ -126,18 +126,28 @@ async def main():
     # ── Callback: USB device removed ─────────────────────────────────
     async def on_usb_device_removed(usb_dev: USBDevice):
         device_uid = usb_dev.udid[:12]
+        fallback_url = None
+
         if usb_dev.ssh_tunnel and usb_dev.ssh_tunnel.is_alive():
-            tunnel_url = f"http://localhost:{usb_dev.ssh_tunnel.local_port}"
-            logger.info("USB unplugged for %s, using SSH tunnel: %s", device_uid, tunnel_url)
-            device_map[device_uid] = tunnel_url
-            if executor:
-                executor.update_device_url(device_uid, tunnel_url)
+            fallback_url = f"http://localhost:{usb_dev.ssh_tunnel.local_port}"
+            logger.info("USB unplugged for %s, trying SSH tunnel: %s", device_uid, fallback_url)
         elif usb_dev.wifi_ip:
-            wifi_url = f"http://{usb_dev.wifi_ip}:{WDA_PORT_ON_DEVICE}"
-            logger.info("USB unplugged for %s, switching to WiFi: %s", device_uid, wifi_url)
-            device_map[device_uid] = wifi_url
-            if executor:
-                executor.update_device_url(device_uid, wifi_url)
+            fallback_url = f"http://{usb_dev.wifi_ip}:{WDA_PORT_ON_DEVICE}"
+            logger.info("USB unplugged for %s, trying WiFi: %s", device_uid, fallback_url)
+
+        if fallback_url:
+            from client.src.device_info import check_wda_health
+            is_healthy = await check_wda_health(fallback_url)
+            if is_healthy:
+                device_map[device_uid] = fallback_url
+                if executor:
+                    executor.update_device_url(device_uid, fallback_url)
+                logger.info("USB unplugged for %s, WDA alive at %s", device_uid, fallback_url)
+            else:
+                logger.warning("USB removed for %s, WDA unreachable at %s — removing from heartbeat",
+                               device_uid, fallback_url)
+                if heartbeat:
+                    heartbeat.remove_device(device_uid)
         else:
             logger.warning("USB removed for %s with no WiFi/tunnel — removing from heartbeat", device_uid)
             if heartbeat:
