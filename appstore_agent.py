@@ -651,10 +651,14 @@ async def do_search_download(driver, params):
                 logger.info("%s Found target app cell: '%s'", tag, cell_text[:60])
                 try:
                     await driver.tap_element(cid)
-                    await asyncio.sleep(3)
+                    await asyncio.sleep(4)
                     found = await _tap_download_button(driver, tag, apple_password)
+                    if not found:
+                        logger.info("%s Download button not found yet, waiting for page load...", tag)
+                        await asyncio.sleep(3)
+                        found = await _tap_download_button(driver, tag, apple_password)
                     if found:
-                        await _wait_download_complete(driver, tag)
+                        await _wait_download_complete(driver, tag, apple_password)
                         return
                 except Exception as e:
                     logger.warning("%s Error tapping cell: %s", tag, e)
@@ -665,7 +669,7 @@ async def do_search_download(driver, params):
         if found:
             if found == "installed":
                 return
-            await _wait_download_complete(driver, tag)
+            await _wait_download_complete(driver, tag, apple_password)
             return
 
         # Scroll down to find more results
@@ -694,26 +698,37 @@ async def _tap_download_button(driver, tag, apple_password=""):
             await tap_element(driver, btn)
             await asyncio.sleep(3)
 
-            # Handle "always require password" dialog
-            for pname in ["始终需要", "Always Require"]:
-                pbtn = await has_element(driver, "name", pname)
-                if pbtn:
-                    logger.info("%s Tapping password setting: '%s'", tag, pname)
-                    await tap_element(driver, pbtn)
+            # Multiple rounds to handle chained dialogs (password setting → password input)
+            for _round in range(3):
+                # Handle "always require password" dialog
+                handled = False
+                for pname in ["始终需要", "Always Require"]:
+                    pbtn = await has_element(driver, "name", pname)
+                    if pbtn:
+                        logger.info("%s Tapping password setting: '%s'", tag, pname)
+                        await tap_element(driver, pbtn)
+                        await asyncio.sleep(3)
+                        handled = True
+                        break
+
+                # Handle install confirmation button
+                install_btn = await has_element(driver, "name", "安装")
+                if not install_btn:
+                    install_btn = await has_element(driver, "name", "Install")
+                if install_btn:
+                    logger.info("%s Confirming install", tag)
+                    await tap_element(driver, install_btn)
                     await asyncio.sleep(3)
+                    handled = True
+
+                # Handle password confirmation dialog
+                pw_handled = await _handle_password_prompt(driver, tag, apple_password)
+                if pw_handled:
+                    handled = True
+
+                if not handled:
                     break
-
-            # Handle password confirmation dialog
-            await _handle_password_prompt(driver, tag, apple_password)
-
-            install_btn = await has_element(driver, "name", "安装")
-            if not install_btn:
-                install_btn = await has_element(driver, "name", "Install")
-            if install_btn:
-                logger.info("%s Confirming install", tag)
-                await tap_element(driver, install_btn)
                 await asyncio.sleep(2)
-                await _handle_password_prompt(driver, tag, apple_password)
 
             await dismiss_popups(driver, tag)
             return "tapped"
@@ -745,10 +760,10 @@ async def _tap_download_button(driver, tag, apple_password=""):
 
 
 async def _handle_password_prompt(driver, tag, apple_password):
-    """Handle the Apple ID password confirmation dialog during download."""
+    """Handle the Apple ID password confirmation dialog during download. Returns True if handled."""
     secure_fields = await find_elements(driver, "class name", "XCUIElementTypeSecureTextField")
     if not secure_fields:
-        return
+        return False
 
     sign_btn = await has_element(driver, "name", "登录")
     if not sign_btn:
@@ -759,7 +774,7 @@ async def _handle_password_prompt(driver, tag, apple_password):
         sign_btn = await has_element(driver, "name", "OK")
 
     if not sign_btn:
-        return
+        return False
 
     logger.info("%s Password confirmation dialog detected, entering password", tag)
     if apple_password:
@@ -775,19 +790,26 @@ async def _handle_password_prompt(driver, tag, apple_password):
             cancel_btn = await has_element(driver, "name", "Cancel")
         if cancel_btn:
             await tap_element(driver, cancel_btn)
+    return True
 
 
-async def _wait_download_complete(driver, tag):
+async def _wait_download_complete(driver, tag, apple_password=""):
     """Wait for download to finish (Open button appears)."""
     logger.info("%s Waiting for download to complete...", tag)
-    for _ in range(30):
+    for i in range(30):
         await asyncio.sleep(5)
         for name in ["打开", "Open"]:
             btn = await has_element(driver, "name", name)
             if btn:
                 logger.info("%s Download complete!", tag)
                 return
+
+        # Handle late password prompts or other dialogs
+        await _handle_password_prompt(driver, tag, apple_password)
         await dismiss_popups(driver, tag)
+
+        if i % 6 == 5:
+            logger.info("%s Still downloading... (%ds)", tag, (i + 1) * 5)
 
     logger.warning("%s Download may still be in progress after timeout", tag)
 
