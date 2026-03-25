@@ -43,18 +43,12 @@ async def auto_assign_accounts(device_id: PydanticObjectId) -> list[AppleAccount
         AppleAccount.status == AppleAccountStatus.ACTIVE,
     ).sort("+created_at").limit(need).to_list()
 
-    device = await Device.get(device_id)
     for acc in available:
         acc.bound_device_id = device_id
         if not current:
             acc.is_primary = True
-            if device:
-                device.current_apple_id = acc.id
         await acc.save()
         current.append(acc)
-
-    if device and available:
-        await device.save()
 
     logger.info("auto_assign: device %s now has %d account(s) (assigned %d new)",
                 device_id, len(current), len(available))

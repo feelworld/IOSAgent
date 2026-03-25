@@ -181,6 +181,15 @@ async def _handle_task_result(payload: dict):
     if device:
         device.status = DeviceStatus.ONLINE
         device.current_task_id = None
+
+        if task.params and task.params.get("action") == "login" and task.params.get("apple_id"):
+            from server.src.models.apple_account import AppleAccount
+            acct = await AppleAccount.find_one(AppleAccount.email == task.params["apple_id"])
+            if acct:
+                device.current_apple_id = acct.id
+                logger.info("Login succeeded — set current_apple_id=%s (%s) for device %s",
+                            acct.id, acct.email, device.device_uid)
+
         await device.save()
 
     await broadcast_to_admins({

@@ -75,15 +75,11 @@ async def register_device(
 
 
 async def _try_auto_assign(device: Device):
-    """Auto-assign accounts from pool when device has fewer than the limit."""
+    """Auto-assign accounts from pool when device has fewer than the limit.
+    Does NOT set current_apple_id — that should only reflect actual login state."""
     try:
         from server.src.services.apple_account_service import auto_assign_accounts
-        accounts = await auto_assign_accounts(device.id)
-        if accounts and not device.current_apple_id:
-            primary = next((a for a in accounts if a.is_primary), None)
-            if primary:
-                device.current_apple_id = primary.id
-                await device.save()
+        await auto_assign_accounts(device.id)
     except Exception as e:
         logger.warning("Auto-assign failed for %s: %s", device.device_uid, e)
 

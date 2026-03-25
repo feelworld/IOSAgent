@@ -16,33 +16,51 @@ CANCELLABLE_STATUSES = {TaskStatus.PENDING, TaskStatus.DISPATCHED, TaskStatus.RU
 
 
 async def _inject_apple_account(device: Device, params: dict) -> dict:
-    """Auto-inject Apple account credentials into params if not already present."""
+    """Auto-inject Apple account credentials into params.
+
+    For login: picks a bound account and injects id+password.
+    For search_download: only injects the password of the ACTUALLY logged-in account
+                         (device.current_apple_id), not a random bound account.
+    current_apple_id is ONLY set after a successful login, not during account assignment.
+    """
     from server.src.models.apple_account import AppleAccount
     from server.src.services.apple_account_service import get_next_account
     from server.src.utils.crypto import decrypt_aes256
 
     params = dict(params)
+    action = params.get("action", "login")
 
+    # Case 1: User manually specified an apple_id — just fill in the password
     if params.get("apple_id") and not params.get("apple_password"):
         account = await AppleAccount.find_one(AppleAccount.email == params["apple_id"])
         if account:
             params["apple_password"] = decrypt_aes256(account.encrypted_password)
-            device.current_apple_id = account.id
-            await device.save()
             logger.info("Injected password for manually selected %s on device %s",
                         account.email, device.device_uid)
         return params
 
+    # Case 2: Both apple_id and password already provided
     if params.get("apple_id") and params.get("apple_password"):
         return params
 
+    # Case 3: For non-login actions (e.g. search_download),
+    # use the ACTUALLY logged-in account (current_apple_id)
+    if action != "login" and device.current_apple_id:
+        account = await AppleAccount.get(device.current_apple_id)
+        if account and account.status.value == "active":
+            params["apple_id"] = account.email
+            params["apple_password"] = decrypt_aes256(account.encrypted_password)
+            logger.info("Using currently logged-in account %s for %s on device %s",
+                        account.email, action, device.device_uid)
+            return params
+
+    # Case 4: For login action — pick next account from pool
     account = await get_next_account(device.id)
     if account:
         params["apple_id"] = account.email
         params["apple_password"] = decrypt_aes256(account.encrypted_password)
-        logger.info("Auto-injected Apple account %s for device %s", account.email, device.device_uid)
-        device.current_apple_id = account.id
-        await device.save()
+        logger.info("Auto-injected Apple account %s for device %s (action=%s)",
+                    account.email, device.device_uid, action)
 
     return params
 

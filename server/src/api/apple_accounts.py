@@ -210,10 +210,6 @@ async def bind_to_device(
     account.is_primary = body.is_primary
     await account.save()
 
-    if body.is_primary:
-        device.current_apple_id = account.id
-        await device.save()
-
     return _ok(await _serialize_account(account))
 
 
@@ -271,14 +267,6 @@ async def unbind_and_refill(account_id: str, _user=Depends(get_current_user)):
     from server.src.services.apple_account_service import auto_assign_accounts
     new_accounts = await auto_assign_accounts(device_id)
 
-    if new_accounts and device_id:
-        device = await Device.get(device_id)
-        if device and not device.current_apple_id:
-            primary = next((a for a in new_accounts if a.is_primary), None)
-            if primary:
-                device.current_apple_id = primary.id
-                await device.save()
-
     return _ok({
         "removed": await _serialize_account(account),
         "device_accounts": [await _serialize_account(a) for a in new_accounts],
@@ -296,11 +284,6 @@ async def distribute_to_all_devices(_user=Depends(get_current_user)):
     results = []
     for device in online_devices:
         accounts = await auto_assign_accounts(device.id)
-        if accounts and not device.current_apple_id:
-            primary = next((a for a in accounts if a.is_primary), None)
-            if primary:
-                device.current_apple_id = primary.id
-                await device.save()
         results.append({
             "device_uid": device.device_uid,
             "device_name": device.name,
