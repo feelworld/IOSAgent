@@ -182,7 +182,7 @@ async def _handle_task_result(payload: dict):
         device.status = DeviceStatus.ONLINE
         device.current_task_id = None
 
-        if task.params and task.params.get("action") == "login" and task.params.get("apple_id"):
+        if task.params and task.params.get("action") in ("login", "full_flow") and task.params.get("apple_id"):
             from server.src.models.apple_account import AppleAccount
             acct = await AppleAccount.find_one(AppleAccount.email == task.params["apple_id"])
             if acct:

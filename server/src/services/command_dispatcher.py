@@ -45,7 +45,7 @@ async def _inject_apple_account(device: Device, params: dict) -> dict:
 
     # Case 3: For non-login actions (e.g. search_download),
     # use the ACTUALLY logged-in account (current_apple_id)
-    if action != "login" and device.current_apple_id:
+    if action not in ("login", "full_flow") and device.current_apple_id:
         account = await AppleAccount.get(device.current_apple_id)
         if account and account.status.value == "active":
             params["apple_id"] = account.email
