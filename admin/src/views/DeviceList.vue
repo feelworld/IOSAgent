@@ -18,6 +18,7 @@ const dispatchVisible = ref(false)
 const dispatchForm = ref({
   action: 'login',
   app_name: '',
+  app_names: '',
   apple_id: '',
   timeout: 300,
 })
@@ -28,6 +29,7 @@ const loadingAccounts = ref(false)
 const actionOptions = [
   { label: '登录 Apple ID', value: 'login' },
   { label: '搜索下载 App', value: 'search_download' },
+  { label: '删除 App', value: 'delete_app' },
   { label: '登录 + 下载 (完整流程)', value: 'full_flow' },
 ]
 
@@ -37,13 +39,16 @@ const needsLogin = computed(() =>
 const needsAppName = computed(() =>
   ['search_download', 'full_flow'].includes(dispatchForm.value.action)
 )
+const needsAppNames = computed(() =>
+  dispatchForm.value.action === 'delete_app'
+)
 
 function handleSelectionChange(rows: DeviceItem[]) {
   selectedDevices.value = rows
 }
 
 async function openDispatchDialog() {
-  dispatchForm.value = { action: 'login', app_name: '', apple_id: '', timeout: 300 }
+  dispatchForm.value = { action: 'login', app_name: '', app_names: '', apple_id: '', timeout: 300 }
   deviceAccounts.value = []
   dispatchVisible.value = true
   await loadDispatchAccounts()
@@ -73,6 +78,10 @@ async function handleDispatch() {
     ElMessage.warning('请输入 App 名称')
     return
   }
+  if (needsAppNames.value && !dispatchForm.value.app_names.trim()) {
+    ElMessage.warning('请输入要删除的 App 名称')
+    return
+  }
 
   dispatching.value = true
   try {
@@ -82,6 +91,7 @@ async function handleDispatch() {
       timeout_seconds: dispatchForm.value.timeout,
     }
     if (dispatchForm.value.app_name) payload.app_name = dispatchForm.value.app_name
+    if (dispatchForm.value.app_names) payload.app_names = dispatchForm.value.app_names
     if (dispatchForm.value.apple_id) {
       payload.params = { apple_id: dispatchForm.value.apple_id }
     }
@@ -323,6 +333,12 @@ onMounted(() => {
         </el-form-item>
         <el-form-item v-if="needsAppName" label="App 名称">
           <el-input v-model="dispatchForm.app_name" placeholder="例如: 微信" />
+        </el-form-item>
+        <el-form-item v-if="needsAppNames" label="App 名称">
+          <el-input v-model="dispatchForm.app_names" placeholder="多个用逗号分隔，例如: VLC, 微信" />
+          <div style="font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px">
+            支持多个 App，用逗号分隔
+          </div>
         </el-form-item>
         <el-form-item label="超时 (秒)">
           <el-input-number v-model="dispatchForm.timeout" :min="30" :max="3600" :step="30" />

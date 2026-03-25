@@ -79,6 +79,7 @@ export const useTaskStore = defineStore('task', () => {
     device_ids: string[]
     action?: string
     app_name?: string
+    app_names?: string
     script_id?: string
     script_version?: number
     params?: Record<string, any>

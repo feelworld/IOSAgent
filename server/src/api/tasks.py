@@ -48,6 +48,7 @@ class DispatchRequest(BaseModel):
     device_ids: list[str]
     action: str = "login"
     app_name: Optional[str] = None
+    app_names: Optional[str] = None
     params: Optional[dict] = None
     timeout_seconds: int = Field(default=300, ge=10, le=7200)
     script_id: Optional[str] = None
@@ -74,6 +75,8 @@ async def dispatch_tasks(body: DispatchRequest, _user=Depends(get_current_user))
     merged_params["action"] = body.action
     if body.app_name:
         merged_params["app_name"] = body.app_name
+    if body.app_names:
+        merged_params["app_names"] = body.app_names
 
     oid_device_ids = [PydanticObjectId(d) for d in body.device_ids]
     tasks = await task_scheduler.batch_dispatch(

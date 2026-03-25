@@ -30,6 +30,9 @@ async def _inject_apple_account(device: Device, params: dict) -> dict:
     params = dict(params)
     action = params.get("action", "login")
 
+    if action == "delete_app":
+        return params
+
     # Case 1: User manually specified an apple_id — just fill in the password
     if params.get("apple_id") and not params.get("apple_password"):
         account = await AppleAccount.find_one(AppleAccount.email == params["apple_id"])

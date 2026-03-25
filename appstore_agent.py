@@ -3,12 +3,14 @@ App Store 自动化脚本 (模块化)
 通过 action 参数路由到不同功能:
   - login:           登录 Apple ID
   - search_download: 搜索并下载指定 App
+  - delete_app:      删除一个或多个 App
   - full_flow:       登录 + 搜索下载 (串联)
 
 params 由系统自动注入:
     - action: 执行动作
     - apple_id / apple_password: 账号密码 (login / full_flow 需要)
     - app_name: 要搜索下载的 App 名称 (search_download / full_flow 需要)
+    - app_names: 要删除的 App 名称, 逗号分隔或列表 (delete_app 需要)
     - ios_version: 设备 iOS 版本
     - device_uid: 设备 UID
 
@@ -815,12 +817,223 @@ async def _wait_download_complete(driver, tag, apple_password=""):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  Action: delete_app — 从设备删除 App
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async def do_delete_app(driver, params):
+    """Delete one or more apps from the device home screen."""
+    app_names_raw = params.get("app_names", params.get("app_name", ""))
+    device_uid = params.get("device_uid", "")
+    tag = f"[Delete][{device_uid}]"
+
+    if isinstance(app_names_raw, list):
+        app_names = [n.strip() for n in app_names_raw if n.strip()]
+    elif isinstance(app_names_raw, str):
+        app_names = [n.strip() for n in app_names_raw.split(",") if n.strip()]
+    else:
+        app_names = []
+
+    if not app_names:
+        raise RuntimeError("Missing app_names or app_name in params")
+
+    logger.info("%s Will delete %d app(s): %s", tag, len(app_names), app_names)
+
+    deleted = []
+    failed = []
+    for name in app_names:
+        try:
+            ok = await _delete_single_app(driver, name, tag)
+            (deleted if ok else failed).append(name)
+        except Exception as e:
+            logger.warning("%s Failed to delete '%s': %s", tag, name, e)
+            failed.append(name)
+
+    logger.info("%s Delete done — deleted=%s, failed=%s", tag, deleted, failed)
+    if failed:
+        raise RuntimeError(f"Failed to delete: {', '.join(failed)}")
+
+
+async def _go_home(driver, tag):
+    """Press Home button to return to SpringBoard."""
+    try:
+        await driver._request(
+            "POST", f"/session/{driver._session_id}/wda/pressButton",
+            json={"name": "home"},
+        )
+    except Exception:
+        pass
+    await asyncio.sleep(1)
+    try:
+        await driver._request(
+            "POST", f"/session/{driver._session_id}/wda/pressButton",
+            json={"name": "home"},
+        )
+    except Exception:
+        pass
+    await asyncio.sleep(1.5)
+
+
+async def _long_press(driver, x, y, duration_ms=1500):
+    """Perform a long press at given coordinates."""
+    actions = {"actions": [{"type": "pointer", "id": "finger1",
+        "parameters": {"pointerType": "touch"}, "actions": [
+            {"type": "pointerMove", "duration": 0, "x": int(x), "y": int(y)},
+            {"type": "pointerDown", "button": 0},
+            {"type": "pause", "duration": duration_ms},
+            {"type": "pointerUp", "button": 0},
+        ]}]}
+    await driver._request("POST", f"/session/{driver._session_id}/actions", json=actions)
+
+
+async def _swipe_home_page(driver, direction="left"):
+    """Swipe home screen to navigate pages."""
+    size = await driver.get_window_size()
+    w, h = size.get("width", 375), size.get("height", 667)
+    mid_y = h // 2
+    if direction == "left":
+        sx, ex = w * 3 // 4, w // 4
+    else:
+        sx, ex = w // 4, w * 3 // 4
+    actions = {"actions": [{"type": "pointer", "id": "finger1",
+        "parameters": {"pointerType": "touch"}, "actions": [
+            {"type": "pointerMove", "duration": 0, "x": sx, "y": mid_y},
+            {"type": "pointerDown", "button": 0},
+            {"type": "pointerMove", "duration": 300, "x": ex, "y": mid_y},
+            {"type": "pointerUp", "button": 0},
+        ]}]}
+    await driver._request("POST", f"/session/{driver._session_id}/actions", json=actions)
+    await asyncio.sleep(1.5)
+
+
+async def _find_app_icon(driver, app_name, tag):
+    """Find an app icon on the home screen, swiping through pages if needed."""
+    for page in range(7):
+        icon = await has_element(driver, "name", app_name)
+        if icon:
+            logger.info("%s Found app icon '%s' on page %d", tag, app_name, page)
+            return icon
+
+        source = await get_source_safe(driver)
+        if app_name in source:
+            icons = await find_elements(driver, "class name", "XCUIElementTypeIcon")
+            for ic in icons:
+                ic_id = ic.get("ELEMENT") or list(ic.values())[0]
+                try:
+                    lbl = await driver._request(
+                        "GET", f"/session/{driver._session_id}/element/{ic_id}/attribute/label",
+                    )
+                    if app_name.lower() in lbl.get("value", "").lower():
+                        logger.info("%s Found icon via label match on page %d", tag, page)
+                        return ic
+                except Exception:
+                    pass
+
+        if page < 6:
+            logger.info("%s App not on page %d, swiping...", tag, page)
+            await _swipe_home_page(driver, "left")
+
+    return None
+
+
+async def _delete_single_app(driver, app_name, tag):
+    """Delete a single app via home screen long press menu."""
+    logger.info("%s Deleting: '%s'", tag, app_name)
+
+    await _go_home(driver, tag)
+
+    icon = await _find_app_icon(driver, app_name, tag)
+    if not icon:
+        logger.warning("%s App icon '%s' not found on home screen", tag, app_name)
+        return False
+
+    eid = icon.get("ELEMENT") or list(icon.values())[0]
+    try:
+        rect = await driver._request(
+            "GET", f"/session/{driver._session_id}/element/{eid}/rect",
+        )
+        rv = rect.get("value", {})
+        cx = rv.get("x", 0) + rv.get("width", 60) // 2
+        cy = rv.get("y", 0) + rv.get("height", 60) // 2
+    except Exception:
+        logger.warning("%s Cannot get icon rect, using element tap", tag)
+        cx, cy = None, None
+
+    if cx is not None:
+        logger.info("%s Long pressing icon at (%d, %d)", tag, cx, cy)
+        await _long_press(driver, cx, cy, 1500)
+    else:
+        await _long_press(driver, 100, 300, 1500)
+    await asyncio.sleep(2)
+
+    # iOS context menu: look for "Remove App" / "移除App"
+    remove_labels = ["移除App", "Remove App", "删除App", "Delete App",
+                     "移除应用", "Remove Application"]
+    remove_btn = None
+    for lbl in remove_labels:
+        remove_btn = await has_element(driver, "name", lbl)
+        if remove_btn:
+            logger.info("%s Tapping context menu: '%s'", tag, lbl)
+            await tap_element(driver, remove_btn)
+            await asyncio.sleep(2)
+            break
+
+    if not remove_btn:
+        all_btns = await find_elements(driver, "class name", "XCUIElementTypeButton")
+        labels = []
+        for b in all_btns[:20]:
+            bid = b.get("ELEMENT") or list(b.values())[0]
+            try:
+                a = await driver._request(
+                    "GET", f"/session/{driver._session_id}/element/{bid}/attribute/label",
+                )
+                lbl_val = a.get("value", "")
+                if lbl_val:
+                    labels.append(lbl_val)
+                if any(kw in lbl_val for kw in ["移除", "Remove", "删除", "Delete"]):
+                    logger.info("%s Found remove button via scan: '%s'", tag, lbl_val)
+                    await driver.tap_element(bid)
+                    await asyncio.sleep(2)
+                    remove_btn = b
+                    break
+            except Exception:
+                pass
+        if not remove_btn:
+            logger.warning("%s No remove option found. Buttons: %s", tag, labels)
+            await _go_home(driver, tag)
+            return False
+
+    # Confirmation alert: "Delete App" / "删除App"
+    delete_labels = ["删除App", "Delete App", "删除应用"]
+    for lbl in delete_labels:
+        btn = await has_element(driver, "name", lbl)
+        if btn:
+            logger.info("%s Confirming delete: '%s'", tag, lbl)
+            await tap_element(driver, btn)
+            await asyncio.sleep(2)
+            break
+
+    # Final confirmation: "删除" / "Delete"
+    final_labels = ["删除", "Delete"]
+    for lbl in final_labels:
+        btn = await has_element(driver, "name", lbl)
+        if btn:
+            logger.info("%s Final confirm: '%s'", tag, lbl)
+            await tap_element(driver, btn)
+            await asyncio.sleep(2)
+            break
+
+    logger.info("%s App '%s' deleted", tag, app_name)
+    return True
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  统一入口
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ACTION_MAP = {
     "login": do_login,
     "search_download": do_search_download,
+    "delete_app": do_delete_app,
 }
 
 
