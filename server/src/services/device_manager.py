@@ -49,6 +49,7 @@ async def register_device(
                 setattr(device, key, val)
         await device.save()
         logger.info(f"Device re-registered: {device_uid} (status={device.status.value})")
+        await _try_auto_assign(device)
     else:
         init_kwargs = dict(
             device_uid=device_uid,
@@ -69,7 +70,22 @@ async def register_device(
         device = Device(**init_kwargs)
         await device.insert()
         logger.info(f"New device registered: {device_uid}")
+        await _try_auto_assign(device)
     return device
+
+
+async def _try_auto_assign(device: Device):
+    """Auto-assign accounts from pool when device has fewer than the limit."""
+    try:
+        from server.src.services.apple_account_service import auto_assign_accounts
+        accounts = await auto_assign_accounts(device.id)
+        if accounts and not device.current_apple_id:
+            primary = next((a for a in accounts if a.is_primary), None)
+            if primary:
+                device.current_apple_id = primary.id
+                await device.save()
+    except Exception as e:
+        logger.warning("Auto-assign failed for %s: %s", device.device_uid, e)
 
 
 async def register_companion(

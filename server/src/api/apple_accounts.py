@@ -285,6 +285,30 @@ async def unbind_and_refill(account_id: str, _user=Depends(get_current_user)):
     })
 
 
+# ── Distribute to all online devices ─────────────────────────
+
+@router.post("/distribute-all")
+async def distribute_to_all_devices(_user=Depends(get_current_user)):
+    """Auto-assign accounts from pool to all online devices that need them."""
+    from server.src.services.apple_account_service import auto_assign_accounts
+
+    online_devices = await Device.find(Device.status == "online").to_list()
+    results = []
+    for device in online_devices:
+        accounts = await auto_assign_accounts(device.id)
+        if accounts and not device.current_apple_id:
+            primary = next((a for a in accounts if a.is_primary), None)
+            if primary:
+                device.current_apple_id = primary.id
+                await device.save()
+        results.append({
+            "device_uid": device.device_uid,
+            "device_name": device.name,
+            "account_count": len(accounts),
+        })
+    return _ok({"devices": results, "total_devices": len(results)})
+
+
 # ── Enable / Disable ──────────────────────────────────────────
 
 @router.post("/{account_id}/disable")
