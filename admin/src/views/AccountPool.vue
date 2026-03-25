@@ -131,6 +131,21 @@ async function handleUnbind(acc: AccountItem) {
   } catch { /* cancelled */ }
 }
 
+const distributing = ref(false)
+async function handleDistributeAll() {
+  try {
+    await ElMessageBox.confirm('将未分配的账号自动分配给所有在线设备，确定？', '一键分配')
+    distributing.value = true
+    const result = await store.distributeAll()
+    const devices = result.devices || []
+    ElMessage.success(`已分配 ${devices.length} 台设备`)
+    await loadAccounts()
+    await store.fetchStats()
+  } catch { /* cancelled */ } finally {
+    distributing.value = false
+  }
+}
+
 onMounted(() => {
   loadAccounts()
   store.fetchStats()
@@ -186,6 +201,7 @@ onMounted(() => {
           <el-option label="未分配" value="no" />
         </el-select>
         <el-button type="primary" @click="importVisible = true">批量导入</el-button>
+        <el-button type="success" :loading="distributing" @click="handleDistributeAll">一键分配</el-button>
       </el-space>
     </el-card>
 

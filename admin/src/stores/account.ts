@@ -109,6 +109,11 @@ export const useAccountStore = defineStore('account', () => {
     return res.data?.data || res.data
   }
 
+  async function distributeAll() {
+    const res = await client.post('/apple-accounts/distribute-all')
+    return res.data?.data || res.data
+  }
+
   return {
     accounts,
     total,
@@ -123,5 +128,6 @@ export const useAccountStore = defineStore('account', () => {
     unbindAccount,
     fetchDeviceAccounts,
     unbindAndRefill,
+    distributeAll,
   }
 })
